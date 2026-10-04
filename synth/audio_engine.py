@@ -136,8 +136,13 @@ class _AudioProcess:
             raise sd.CallbackAbort
 
     def _create_stream(self) -> sd.OutputStream:
-        """Create and start the output stream, trying several latency settings"""
-        latency_options = ['low', 'high', None]
+        """
+        Create and start the output stream: low latency first, then high
+        latency, which a few devices require (some ALSA / USB ones). Other
+        failures (device busy, unsupported settings...) fail both alike.
+        (latency=None would mean the sounddevice default: 'high' again.)
+        """
+        latency_options = ['low', 'high']
         last_error = None
 
         for latency in latency_options:
@@ -175,7 +180,9 @@ class _AudioProcess:
             note = Note(frequency, instrument, self.volume, key)
             with self.lock:
                 self.notes.append(note)
-            log.debug(f"Created note: {key} -> {frequency:.1f}Hz ({instrument_type})")
+            # Confirms the command reached the audio process (the main process
+            # logs the key -> note -> frequency side)
+            log.debug(f"Audio process: note {key} started ({frequency:.1f} Hz, {instrument_type})")
 
         elif cmd_type == 'STOP_NOTE':
             key = command[1]
@@ -183,6 +190,7 @@ class _AudioProcess:
                 for note in self.notes:
                     if note.key == key and not note.is_released:
                         note.release()
+                        log.debug(f"Audio process: note {key} released")
                         break
 
         elif cmd_type == 'SET_VOLUME':

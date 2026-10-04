@@ -144,7 +144,9 @@ class SynthTUI:
         are only shown in the log panel meanwhile.
         """
         with console_paused():
-            with Live(self._render(), screen=True, refresh_per_second=1 / REFRESH_PERIOD,
+            # No auto refresh: rich would refresh from its own thread, out of
+            # step with this loop; each render is drawn here, once
+            with Live(self._render(), screen=True, auto_refresh=False,
                       redirect_stderr=False) as live:
                 # The kitty keyboard protocol flag stacks are independent for
                 # the main and alternate screens: re-enable now that Live has
@@ -152,7 +154,7 @@ class SynthTUI:
                 self.synth.keyboard_handler.on_alt_screen_enter()
                 try:
                     while self.synth.running:
-                        live.update(self._render())
+                        live.update(self._render(), refresh=True)
                         time.sleep(REFRESH_PERIOD)
                 finally:
                     self.synth.keyboard_handler.on_alt_screen_exit()
