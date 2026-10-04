@@ -24,6 +24,7 @@ import codecs
 import configparser
 import ctypes
 import functools
+import logging
 import os
 import re
 import select
@@ -39,8 +40,9 @@ from typing import Callable, Dict, Optional
 # Local imports
 from errors import ConfigError, SynthError
 from keymap import build_all_keymaps, normalize_key
-from logger import log
 from music import MIDI_MAX, MIDI_MIN, midi_to_note
+
+log = logging.getLogger(__name__)
 
 # Kitty protocol progressive enhancement flags:
 # 1 = disambiguate escape codes, 2 = report event types (press/repeat/release),
@@ -87,7 +89,7 @@ def _carbon() -> Optional[ctypes.CDLL]:
     try:
         return ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
     except OSError as e:
-        log(f"Secure Keyboard Entry detection unavailable: {e}", 2)
+        log.warning(f"Secure Keyboard Entry detection unavailable: {e}")
         return None
 
 
@@ -99,13 +101,6 @@ def _secure_input_active() -> bool:
         return False
     carbon = _carbon()
     return carbon is not None and bool(carbon.IsSecureEventInputEnabled())
-    try:
-        if _carbon is None:
-            _carbon = ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
-        return bool(_carbon.IsSecureEventInputEnabled())
-    except OSError as e:
-        log(f"Could not query Secure Keyboard Entry state: {e}", 2)
-        return False
 
 
 class KeyboardHandler:
@@ -182,9 +177,9 @@ class KeyboardHandler:
                               f"outside the playable range ({midi_to_note(MIDI_MIN)} to "
                               f"{midi_to_note(MIDI_MAX)})")
 
-        log(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
-            f"octave shift: {self.octave_shift:+d})", 0)
-        log(f"Control keys: {self.control_keys}", 1)
+        log.debug(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
+                  f"octave shift: {self.octave_shift:+d})")
+        log.info(f"Control keys: {self.control_keys}")
 
     def note_for_key(self, key: str) -> int:
         """MIDI note currently played by a mapped key (octave shift included)"""
@@ -200,10 +195,10 @@ class KeyboardHandler:
         """Shift the layout by `delta` octaves, unless notes would leave the
         playable range. Held notes keep their pitch (see pressed_keys)."""
         if not self._octave_shift_fits(self.octave_shift + delta):
-            log(f"Octave shift limit reached ({self.octave_shift:+d})", 1)
+            log.info(f"Octave shift limit reached ({self.octave_shift:+d})")
             return
         self.octave_shift += delta
-        log(f"Octave shift: {self.octave_shift:+d}", 1)
+        log.info(f"Octave shift: {self.octave_shift:+d}")
 
     def _next_layout(self):
         """Switch to the next available layout. Held notes keep playing
@@ -211,12 +206,12 @@ class KeyboardHandler:
         names = list(self.keymaps)
         self.layout = names[(names.index(self.layout) + 1) % len(names)]
         self.key_to_midi = self.keymaps[self.layout]
-        log(f"Layout: {self.layout}", 1)
+        log.info(f"Layout: {self.layout}")
         # A wide custom layout may not fit the current shift (every layout
         # fits without shift: build_keymap checks the range)
         if not self._octave_shift_fits(self.octave_shift):
-            log(f"Octave shift reset to +0: layout '{self.layout}' does not fit a "
-                f"{self.octave_shift:+d} shift", 1)
+            log.info(f"Octave shift reset to +0: layout '{self.layout}' does not fit a "
+                     f"{self.octave_shift:+d} shift")
             self.octave_shift = 0
 
     def set_callbacks(self,
@@ -303,7 +298,7 @@ class KeyboardHandler:
             return
 
         if key_char not in self.key_to_midi:
-            log(f"Key '{key_char}' is not mapped to any note.", 0)
+            log.debug(f"Key '{key_char}' is not mapped to any note.")
             return
         midi = self.note_for_key(key_char)
         with self.key_lock:
@@ -330,7 +325,7 @@ class KeyboardHandler:
         try:
             os.write(sys.__stdout__.fileno(), seq.encode('ascii'))
         except OSError as e:
-            log(f"Could not write to terminal: {e}", 2)
+            log.warning(f"Could not write to terminal: {e}")
 
     def _detect_kitty_protocol(self) -> bool:
         """
@@ -484,7 +479,7 @@ class KeyboardHandler:
         fd = sys.stdin.fileno()
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         buf = ''
-        log("Keyboard input: kitty keyboard protocol (stdin)", 1)
+        log.info("Keyboard input: kitty keyboard protocol (stdin)")
 
         while self.running:
             ready, _, _ = select.select([fd], [], [], 0.25)
@@ -555,9 +550,9 @@ class KeyboardHandler:
         self._listener = pk.Listener(on_press=on_press, on_release=on_release)
         self._listener.start()
         self._listener.wait()
-        log("Keyboard input: global hook (pynput). For native terminal key "
-            "handling, use a terminal with the kitty keyboard protocol "
-            "(iTerm2 3.5+, kitty, WezTerm, Alacritty, Ghostty).", 1)
+        log.info("Keyboard input: global hook (pynput). For native terminal key "
+                 "handling, use a terminal with the kitty keyboard protocol "
+                 "(iTerm2 3.5+, kitty, WezTerm, Alacritty, Ghostty).")
 
         # macOS diagnostics: listen-only event taps need Input Monitoring
         # (pynput itself only checks the unrelated Accessibility permission)
@@ -567,17 +562,17 @@ class KeyboardHandler:
                 if hasattr(Quartz, 'CGPreflightListenEventAccess'):
                     self._input_monitoring_ok = bool(Quartz.CGPreflightListenEventAccess())
                     if not self._input_monitoring_ok:
-                        log("Missing macOS 'Input Monitoring' permission: enable your "
-                            "terminal in System Settings > Privacy & Security > Input "
-                            "Monitoring, then restart.", 3)
+                        log.error("Missing macOS 'Input Monitoring' permission: enable your "
+                                  "terminal in System Settings > Privacy & Security > Input "
+                                  "Monitoring, then restart.")
                         Quartz.CGRequestListenEventAccess()
             except ImportError:
-                log("Quartz unavailable: cannot check Input Monitoring permission", 2)
+                log.warning("Quartz unavailable: cannot check Input Monitoring permission")
 
             if _secure_input_active():
-                log("Secure Keyboard Entry is ACTIVE: keys will NOT be captured "
-                    "while this terminal is focused. Disable it in your terminal's "
-                    "menu (Terminal.app / iTerm2: 'Secure Keyboard Entry').", 3)
+                log.error("Secure Keyboard Entry is ACTIVE: keys will NOT be captured "
+                          "while this terminal is focused. Disable it in your terminal's "
+                          "menu (Terminal.app / iTerm2: 'Secure Keyboard Entry').")
 
         # Drain stdin so typed characters don't pile up in the tty buffer
         # (events come from the global hook, not from stdin); this thread
@@ -658,7 +653,7 @@ class KeyboardHandler:
             self._listener = None
 
         self._leave_cbreak()
-        log("Keyboard monitoring stopped", 0)
+        log.debug("Keyboard monitoring stopped")
 
     def _enter_cbreak(self):
         """cbreak: char-at-a-time input, no echo. The tty still raises SIGINT
@@ -685,7 +680,7 @@ class KeyboardHandler:
             termios.tcsetattr(fd, termios.TCSANOW, self._saved_term_attrs)
             termios.tcflush(fd, termios.TCIFLUSH)
         except (termios.error, OSError) as e:
-            log(f"Could not restore terminal mode: {e}", 2)
+            log.warning(f"Could not restore terminal mode: {e}")
         self._saved_term_attrs = None
 
     @property
@@ -741,27 +736,27 @@ class KeyboardHandler:
 
     def print_mappings(self):
         """Print all key mappings"""
-        log("\nKey Mappings:", 0)
+        log.debug("\nKey Mappings:")
         for key, midi in self.key_to_midi.items():
-            log(f"  {key:2} -> {midi_to_note(midi)}", 0)
+            log.debug(f"  {key:2} -> {midi_to_note(midi)}")
 
 
 def test_keyboard():
     """Interactive keyboard test"""
-    log("Testing keyboard handler...", 1)
-    log("Press keys (quit key from config to stop)", 1)
+    log.info("Testing keyboard handler...")
+    log.info("Press keys (quit key from config to stop)")
 
     try:
         handler = KeyboardHandler('config.ini')
 
         def on_note_on(key, midi):
-            log(f"♪ {key} -> {midi_to_note(midi)}", 0)
+            log.debug(f"♪ {key} -> {midi_to_note(midi)}")
 
         def on_note_off(key, midi):
-            log(f"♫ {key} -> {midi_to_note(midi)} (off)", 0)
+            log.debug(f"♫ {key} -> {midi_to_note(midi)} (off)")
 
         def on_quit():
-            log("Quit callback triggered", 0)
+            log.debug("Quit callback triggered")
             handler.running = False
 
         handler.set_callbacks(
@@ -780,5 +775,5 @@ def test_keyboard():
         return True
 
     except Exception as e:
-        log(f"Keyboard test failed: {e}", 3)
+        log.error(f"Keyboard test failed: {e}")
         return False

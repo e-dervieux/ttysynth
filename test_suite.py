@@ -3,6 +3,7 @@ Comprehensive test suite for the synthesizer components
 """
 
 # Global imports
+import logging
 import sys
 import time
 
@@ -10,6 +11,7 @@ import time
 from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler, test_keyboard
 from audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
+from logging_setup import setup_logging
 
 def test_music_engine():
     """Test 1: Music Engine Test"""
@@ -332,5 +334,6 @@ def main():
                 print("Invalid choice. Please try again.")
 
 if __name__ == "__main__":
+    setup_logging(logging.DEBUG)
     print("Running test suite...")
     sys.exit(main()) 

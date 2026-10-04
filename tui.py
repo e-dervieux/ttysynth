@@ -6,13 +6,12 @@ screen buffer (like htop: the normal scrollback is restored on exit). It is
 refreshed at ~10 Hz; thanks to the two-process architecture, rendering time
 can never delay the audio callback (separate interpreter, separate GIL).
 
-Log messages are captured through the logger sink mechanism (see logger.py)
-and displayed in a scrolling panel instead of being printed to stdout.
+Log records are displayed in a scrolling panel, from the log history (see
+logging_setup.py); their console output is paused while the TUI is shown.
 """
 
 # Global imports
 import time
-from collections import deque
 
 from rich.layout import Layout
 from rich.live import Live
@@ -21,14 +20,10 @@ from rich.table import Table
 from rich.text import Text
 
 # Local imports
-from logger import set_log_sink, get_log_history, log_level_list
+from logging_setup import console_paused, format_record, log_history
 from music import midi_to_note
 
 REFRESH_PERIOD = 0.1  # seconds between renders (~10 Hz)
-LOG_HISTORY = 100     # log lines kept in memory
-
-# rich styles matching the logger color scheme (DEBUG, INFO, WARNING, ERROR)
-LOG_STYLES = ['dim', 'default', 'yellow', 'red']
 
 
 class SynthTUI:
@@ -43,12 +38,6 @@ class SynthTUI:
                    status, keyboard mappings, current instrument and volume)
         """
         self.synth = synth
-        # Backfill with startup messages logged before the TUI took over
-        self.log_lines = deque(get_log_history(), maxlen=LOG_HISTORY)
-
-    def _log_sink(self, msg, level):
-        """Receive log lines from the logger instead of stdout"""
-        self.log_lines.append((msg, level))
 
     def _render_status(self) -> Panel:
         """Top status bar: stream parameters and live audio process status"""
@@ -125,8 +114,9 @@ class SynthTUI:
     def _render_logs(self, max_lines: int) -> Panel:
         """Bottom panel: most recent log lines"""
         text = Text()
-        for msg, level in list(self.log_lines)[-max_lines:]:
-            text.append(f"{log_level_list[level]} {msg}\n", style=LOG_STYLES[level])
+        for record in log_history()[-max_lines:]:
+            text.append_text(format_record(record))
+            text.append("\n")
         return Panel(text, title="Log", border_style="blue")
 
     def _render(self) -> Layout:
@@ -144,11 +134,10 @@ class SynthTUI:
 
     def run(self):
         """
-        Run the TUI loop (blocking) until the synthesizer stops.
-        Captures the logger output for the duration of the loop.
+        Run the TUI loop (blocking) until the synthesizer stops. Log records
+        are only shown in the log panel meanwhile.
         """
-        set_log_sink(self._log_sink)
-        try:
+        with console_paused():
             with Live(self._render(), screen=True, refresh_per_second=1 / REFRESH_PERIOD,
                       redirect_stderr=False) as live:
                 # The kitty keyboard protocol flag stacks are independent for
@@ -161,5 +150,3 @@ class SynthTUI:
                         time.sleep(REFRESH_PERIOD)
                 finally:
                     self.synth.keyboard_handler.on_alt_screen_exit()
-        finally:
-            set_log_sink(None)

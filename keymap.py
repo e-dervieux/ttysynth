@@ -13,12 +13,14 @@ or one of NAMED_KEYS.
 
 # Global imports
 import configparser
+import logging
 from pathlib import Path
 
 # Local imports
 from errors import ConfigError
-from logger import log
 from music import MIDI_MAX, MIDI_MIN, midi_to_note, note_to_midi
+
+log = logging.getLogger(__name__)
 
 # Built-in layouts: keys in chromatic order, starting at BUILTIN_FIRST_NOTE
 BUILTIN_LAYOUTS = {
@@ -132,7 +134,7 @@ def build_keymap(layout: str, custom_file: Path, control_keys: dict) -> dict:
                               f"({midi_to_note(MIDI_MIN)} to {midi_to_note(MIDI_MAX)})")
         if midi in key_by_midi:
             # Allowed, but probably unintentional
-            log(f"Keys '{key_by_midi[midi]}' and '{name}' both play {midi_to_note(midi)}", 2)
+            log.warning(f"Keys '{key_by_midi[midi]}' and '{name}' both play {midi_to_note(midi)}")
         key_by_midi[midi] = name
         keymap[name] = midi
 
@@ -154,7 +156,7 @@ def build_all_keymaps(initial: str, custom_file: Path, control_keys: dict) -> di
         try:
             keymaps[name] = build_keymap(name, custom_file, control_keys)
         except LayoutNotConfiguredError:
-            log(f"Layout '{name}' not configured ({custom_file.name}), left out of the layout cycle", 1)
+            log.info(f"Layout '{name}' not configured ({custom_file.name}), left out of the layout cycle")
         except ConfigError as e:
-            log(f"Layout '{name}' left out of the layout cycle: {e}", 2)
+            log.warning(f"Layout '{name}' left out of the layout cycle: {e}")
     return {name: keymaps[name] for name in LAYOUT_NAMES if name in keymaps}

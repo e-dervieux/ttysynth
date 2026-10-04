@@ -8,6 +8,7 @@ synthesizes sound in its callback. See audio_engine.py for details.
 """
 
 # Global imports
+import logging
 import sys
 import threading
 import time
@@ -18,8 +19,10 @@ from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine
 from classes import INSTRUMENTS
 from errors import SynthError
-from logger import log
+from logging_setup import setup_logging
 from tui import SynthTUI
+
+log = logging.getLogger(__name__)
 
 
 class Synthesizer:
@@ -50,7 +53,7 @@ class Synthesizer:
             on_instrument_next=self.on_instrument_next
         )
 
-        log("Synthesizer initialized successfully", 0)
+        log.debug("Synthesizer initialized successfully")
 
     @property
     def current_instrument(self) -> str:
@@ -61,50 +64,50 @@ class Synthesizer:
         """Handle note on events"""
         frequency = self.music_engine.midi_to_frequency(midi)
         self.audio_engine.play_note(key, frequency, instrument_type=self.current_instrument)
-        log(f"♪ {key} -> {midi_to_note(midi)} ({frequency:.1f} Hz)", 0)
+        log.debug(f"♪ {key} -> {midi_to_note(midi)} ({frequency:.1f} Hz)")
 
     def on_note_off(self, key, midi):
         """Handle note off events"""
         self.audio_engine.stop_note(key)
-        log(f"♫ {key} -> {midi_to_note(midi)} (off)", 0)
+        log.debug(f"♫ {key} -> {midi_to_note(midi)} (off)")
 
     def on_volume_change(self, volume):
         """Handle volume change events"""
         self.audio_engine.set_volume(volume)
-        log(f"🔊 Volume: {volume*100:.0f}%", 1)
+        log.info(f"🔊 Volume: {volume*100:.0f}%")
 
     def on_instrument_next(self):
         """Cycle to the next instrument"""
         self.instrument_index = (self.instrument_index + 1) % len(self.instrument_names)
-        log(f"🎹 Instrument: {self.current_instrument}", 1)
+        log.info(f"🎹 Instrument: {self.current_instrument}")
 
     def on_quit(self):
         """Handle quit events - only flags the shutdown, the main thread
         performs the actual stop sequence (avoids stopping components from
         within the keyboard listener thread)"""
-        log("Quit requested - shutting down...", 1)
+        log.info("Quit requested - shutting down...")
         self.running = False
 
     def on_record_start(self):
         """Handle record start events"""
-        log("🔴 Recording started", 1)
+        log.info("🔴 Recording started")
         # TODO: Implement recording functionality
-        log("Recording not implemented", 2)
+        log.warning("Recording not implemented")
 
     def on_record_stop(self):
         """Handle record stop events"""
-        log("⬜ Recording stopped", 1)
+        log.info("⬜ Recording stopped")
         # TODO: Implement recording functionality
-        log("Recording not implemented", 2)
+        log.warning("Recording not implemented")
 
     def start(self):
         """Start the synthesizer (raises SynthError if a component cannot
         start; see run() for the cleanup)"""
-        log("Starting synthesizer...", 0)
+        log.debug("Starting synthesizer...")
         self.running = True
         self.audio_engine.start()
         self.keyboard_handler.start()
-        log("✅ Synthesizer started successfully!", 0)
+        log.debug("✅ Synthesizer started successfully!")
 
     def stop(self):
         """Stop the synthesizer"""
@@ -113,16 +116,16 @@ class Synthesizer:
         self._stopped = True
         self.running = False
 
-        log("Stopping synthesizer...", 0)
+        log.debug("Stopping synthesizer...")
         try:
             self.keyboard_handler.stop()
-            log("Keyboard handler stopped", 0)
+            log.debug("Keyboard handler stopped")
         finally:
             # Even if the keyboard cleanup failed: a still running audio
             # process would block the interpreter exit
             self.audio_engine.stop()
-            log("Audio engine stopped", 0)
-        log("Synthesizer stopped", 0)
+            log.debug("Audio engine stopped")
+        log.debug("Synthesizer stopped")
 
     def _on_thread_crash(self, args):
         """
@@ -135,7 +138,7 @@ class Synthesizer:
             self._thread_error = args.exc_value
             thread_name = args.thread.name if args.thread is not None else '?'
             # Debug only: main() reports the error itself after the shutdown
-            log(f"Thread '{thread_name}' failed, shutting down: {args.exc_value!r}", 0)
+            log.debug(f"Thread '{thread_name}' failed, shutting down: {args.exc_value!r}")
         self.running = False
 
     def run(self, use_tui=True):
@@ -158,7 +161,7 @@ class Synthesizer:
                     time.sleep(0.1)
         except KeyboardInterrupt:
             # Ctrl+C is a normal way to quit
-            log("Interrupted (Ctrl+C)", 1)
+            log.info("Interrupted (Ctrl+C)")
         finally:
             self.stop()
             threading.excepthook = previous_hook
@@ -169,21 +172,21 @@ class Synthesizer:
 
 def main() -> int:
     """Main function, returns the process exit code"""
-    log("Python Command Line Audio Synthesizer", 1)
-    log("=====================================", 1)
+    setup_logging(logging.INFO)
+    log.info("Python Command Line Audio Synthesizer")
+    log.info("=====================================")
 
     try:
         Synthesizer().run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):
         # a message is enough. Other exceptions are bugs: keep the traceback.
-        log(str(e), 3)
+        log.error(str(e))
         return 1
 
-    log("Synthesizer exited successfully", 1)
+    log.info("Synthesizer exited successfully")
     return 0
 
 
 if __name__ == "__main__":
-    log("Starting synthesizer", level=0, display_level=1)
     sys.exit(main())

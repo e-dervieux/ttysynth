@@ -8,10 +8,10 @@ display or to a frequency for synthesis.
 
 # Global imports
 import configparser
+import logging
 import re
 
-# Local imports
-from logger import log
+log = logging.getLogger(__name__)
 
 # Semitone offsets of the natural notes from C, and of the accidentals
 _NATURAL_OFFSETS = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
@@ -85,4 +85,4 @@ class MusicEngine:
     def set_tuning(self, freq):
         """Set A4 tuning frequency"""
         self.tuning_freq = freq
-        log(f"Retuned to A4 = {freq} Hz", 1)
+        log.info(f"Retuned to A4 = {freq} Hz")

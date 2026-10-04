@@ -10,7 +10,7 @@ Architecture (hybrid two-process design):
   directly inside the stream callback. Its GIL is shared only with a
   near-idle command thread, so UI work (keyboard handling, TUI rendering)
   can never delay the audio callback.
-- A low-rate status queue flows back to the main process: log messages,
+- A low-rate status queue flows back to the main process: log records,
   xrun count, measured latency and active voice count (displayed by the TUI).
 - Failures of the audio process (stream lost, bug, unexpected death) are
   reported through the status queue too, and shut the synthesizer down (see
@@ -23,6 +23,8 @@ shipping rendered audio through queues.
 
 # Global imports
 import configparser
+import logging
+import logging.handlers
 import multiprocessing as mp
 import queue
 import signal
@@ -37,7 +39,8 @@ import sounddevice as sd
 # Local imports
 from classes import Note, Flute, INSTRUMENTS
 from errors import SynthError
-from logger import log
+
+log = logging.getLogger(__name__)
 
 # Polyphony headroom applied before tanh soft-clipping: with a gain of 1/3,
 # a single note keeps a near-linear (low distortion) response and three
@@ -47,6 +50,14 @@ HEADROOM = 1.0 / 3.0
 
 # How often the audio process reports its status to the main process (seconds)
 STATUS_PERIOD = 0.1
+
+
+class _StatusQueueHandler(logging.handlers.QueueHandler):
+    """Sends the audio process log records to the main process (the single
+    owner of the terminal) through the status queue, as ('LOG', record)"""
+
+    def enqueue(self, record):
+        self.queue.put(('LOG', record))
 
 
 class AudioProcessCrash(RuntimeError):
@@ -91,10 +102,6 @@ class _AudioProcess:
         # by the command loop
         self.callback_error = None
 
-    def send_log(self, msg, level=0):
-        """Forward a log message to the main process (single owner of stdout)"""
-        self.status_queue.put(('LOG', msg, level))
-
     def _audio_callback(self, outdata, frames, time_info, status):
         """
         PortAudio callback - runs on the real-time audio thread.
@@ -136,7 +143,7 @@ class _AudioProcess:
         for latency in latency_options:
             stream = None
             try:
-                self.send_log(f"Trying latency setting: {latency}", 1)
+                log.info(f"Trying latency setting: {latency}")
                 stream = sd.OutputStream(
                     callback=self._audio_callback,
                     samplerate=self.sample_rate,
@@ -146,13 +153,13 @@ class _AudioProcess:
                     latency=latency
                 )
                 stream.start()
-                self.send_log(f"Audio stream started with latency={latency} "
-                              f"(measured: {stream.latency * 1000:.1f} ms)", 1)
+                log.info(f"Audio stream started with latency={latency} "
+                         f"(measured: {stream.latency * 1000:.1f} ms)")
                 return stream
 
             except sd.PortAudioError as e:
                 last_error = e
-                self.send_log(f"Failed with latency={latency}: {e}", 2)
+                log.warning(f"Failed with latency={latency}: {e}")
                 if stream is not None:
                     stream.close()
 
@@ -166,13 +173,13 @@ class _AudioProcess:
             key, frequency, instrument_type = command[1], command[2], command[3]
             instrument_class = INSTRUMENTS.get(instrument_type)
             if instrument_class is None:
-                self.send_log(f"Unknown instrument '{instrument_type}', defaulting to flute", 2)
+                log.warning(f"Unknown instrument '{instrument_type}', defaulting to flute")
                 instrument_class = Flute
 
             note = Note(frequency, instrument_class(self.sample_rate), self.volume, key)
             with self.lock:
                 self.notes.append(note)
-            self.send_log(f"Created note: {key} -> {frequency:.1f}Hz ({instrument_type})", 0)
+            log.debug(f"Created note: {key} -> {frequency:.1f}Hz ({instrument_type})")
 
         elif cmd_type == 'STOP_NOTE':
             key = command[1]
@@ -191,10 +198,10 @@ class _AudioProcess:
 
         elif cmd_type == 'STOP':
             self.running = False
-            self.send_log("Audio process stopping", 1)
+            log.info("Audio process stopping")
 
         else:
-            self.send_log(f"Unknown command: {cmd_type}", 2)
+            log.warning(f"Unknown command: {cmd_type}")
 
     def _emit_status(self, stream):
         """Send a status snapshot to the main process (consumed by the TUI)"""
@@ -252,8 +259,14 @@ class _AudioProcess:
             stream.close()
 
 
-def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, channels, default_volume):
+def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, channels,
+                       default_volume, log_level):
     """Entry point of the audio process"""
+    # Records below the main process level are not even sent
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(_StatusQueueHandler(status_queue))
+
     # Ctrl+C sends SIGINT to the whole foreground process group; ignore it
     # here so the shutdown is solely coordinated by the main process through
     # the 'STOP' command (otherwise a KeyboardInterrupt traceback is printed
@@ -269,7 +282,7 @@ def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, ch
         # raises it, instead of printing it over the UI
         status_queue.put(('CRASH', traceback.format_exc()))
         sys.exit(1)
-    process.send_log("Audio process stopped", 1)
+    log.info("Audio process stopped")
     status_queue.put(('EXIT',))
 
 
@@ -315,8 +328,8 @@ class AudioEngine:
         self._ready_event = threading.Event()
         self._start_error = None  # Failure of the audio process before READY
 
-        log(f"Audio engine initialized: {self.sample_rate}Hz, {self.buffer_size} samples, "
-            f"{self.channels} channel(s)", 1)
+        log.info(f"Audio engine initialized: {self.sample_rate}Hz, {self.buffer_size} samples, "
+                 f"{self.channels} channel(s)")
 
     def set_volume(self, volume: float):
         """Set master volume (0.0 to 1.0)"""
@@ -380,7 +393,8 @@ class AudioEngine:
             else:
                 kind = item[0]
                 if kind == 'LOG':
-                    log(item[1], item[2])
+                    record = item[1]
+                    logging.getLogger(record.name).handle(record)
                 elif kind == 'STATUS':
                     self.latest_status = item[1]
                 elif kind == 'READY':
@@ -417,11 +431,12 @@ class AudioEngine:
         self._ready_event.clear()
         self._start_error = None
 
-        log("Starting audio process", 1)
+        log.info("Starting audio process")
         self.process = mp.Process(
             target=audio_process_main,
             args=(self.command_queue, self.status_queue, self.sample_rate,
-                  self.buffer_size, self.channels, self.default_volume),
+                  self.buffer_size, self.channels, self.default_volume,
+                  logging.getLogger().getEffectiveLevel()),
             name='audio-process'
         )
         self.process.start()
@@ -439,7 +454,7 @@ class AudioEngine:
             self.stop()
             raise self._start_error
 
-        log("Audio engine started successfully", 1)
+        log.info("Audio engine started successfully")
 
     def stop(self):
         """Stop audio engine (the audio process closes its own stream)"""
@@ -449,11 +464,11 @@ class AudioEngine:
         self.running = False
 
         if self.process is not None and self.process.is_alive():
-            log("Stopping audio process", 1)
+            log.info("Stopping audio process")
             self.command_queue.put(('STOP',))
             self.process.join(timeout=2.0)
             if self.process.is_alive():
-                log("Force terminating audio process", 2)
+                log.warning("Force terminating audio process")
                 self.process.terminate()
                 self.process.join()
         self.process = None
@@ -462,18 +477,18 @@ class AudioEngine:
             self._status_thread.join(timeout=1.0)
             self._status_thread = None
 
-        log("Audio engine stopped", 1)
+        log.info("Audio engine stopped")
 
     def print_device_info(self):
         """Print available audio devices"""
-        log("\nAvailable audio devices:", 1)
+        log.info("\nAvailable audio devices:")
         devices = sd.query_devices()
-        log(str(devices), 1)
+        log.info(str(devices))
 
 
 def test_basic_audio(duration=2.0, frequency=440.0):
     """Test basic audio playback"""
-    log(f"Playing {frequency}Hz tone for {duration} seconds...", 1)
+    log.info(f"Playing {frequency}Hz tone for {duration} seconds...")
 
     sample_rate = 48000
     t = np.linspace(0, duration, int(sample_rate * duration), False)
@@ -482,13 +497,13 @@ def test_basic_audio(duration=2.0, frequency=440.0):
     sd.play(wave, sample_rate)
     sd.wait()
 
-    log("Basic audio test completed", 1)
+    log.info("Basic audio test completed")
     return True
 
 
 def test_streaming_audio(duration=3.0):
     """Test streaming audio"""
-    log(f"Testing streaming audio for {duration} seconds...", 1)
+    log.info(f"Testing streaming audio for {duration} seconds...")
 
     sample_rate = 48000
     block_size = 128
@@ -508,5 +523,5 @@ def test_streaming_audio(duration=3.0):
                       blocksize=block_size):
         time.sleep(duration)
 
-    log("Streaming audio test completed", 1)
+    log.info("Streaming audio test completed")
     return True
