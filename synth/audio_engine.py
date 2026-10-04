@@ -11,7 +11,8 @@ Architecture (hybrid two-process design):
   near-idle command thread, so UI work (keyboard handling, TUI rendering)
   can never delay the audio callback.
 - A low-rate status queue flows back to the main process: log records,
-  xrun count, measured latency and active voice count (displayed by the TUI).
+  xrun count, output latency (as reported by PortAudio) and active voice
+  count (displayed by the TUI).
 - Failures of the audio process (stream lost, bug, unexpected death) are
   reported through the status queue too, and shut the synthesizer down (see
   AudioEngine._status_reader).
@@ -42,10 +43,11 @@ from synth.errors import SynthError
 
 log = logging.getLogger(__name__)
 
-# Polyphony headroom applied before tanh soft-clipping: with a gain of 1/3,
-# a single note keeps a near-linear (low distortion) response and three
-# simultaneous full-scale notes land around +/-1 with gentle compression
-# instead of hard clipping.
+# Polyphony headroom applied before tanh soft-clipping. With a gain of 1/3,
+# a single full-scale note peaks at tanh(1/3) = 0.32 (about -10 dBFS) with a
+# near-linear (low distortion) response; three in phase peak at tanh(1) =
+# 0.76 and five at 0.93: chords are gently compressed instead of hard
+# clipped.
 HEADROOM = 1.0 / 3.0
 
 # How often the audio process reports its status to the main process (seconds)
@@ -159,7 +161,7 @@ class _AudioProcess:
                 )
                 stream.start()
                 log.info(f"Audio stream started with latency={latency} "
-                         f"(measured: {stream.latency * 1000:.1f} ms)")
+                         f"(reported: {stream.latency * 1000:.1f} ms)")
                 return stream
 
             except sd.PortAudioError as e:

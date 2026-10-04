@@ -5,7 +5,8 @@ with an htop-like full-screen terminal interface.
 
 ## Features
 
-- Real-time, low-latency audio synthesis (48 kHz, 128-sample buffers by default)
+- Real-time, low-latency audio synthesis (configurable buffer size: 64 samples,
+  i.e. 1.3 ms at 48 kHz, in the shipped `config.ini`)
 - Polyphonic: play chords, notes overlap naturally through their release phase
 - Two instruments, switchable live:
   - **Flute**: additive synthesis (sine + harmonics) with a soft ADSR envelope
@@ -15,15 +16,17 @@ with an htop-like full-screen terminal interface.
   quarter-comma meantone and Werckmeister I (III) "correct temperament"
   (see `synth/music.py` for how each distributes the Pythagorean comma)
 - Full-screen TUI (alternate screen buffer, like htop) showing sample rate,
-  buffer size, measured latency, xrun count, volume, active notes and a
-  scrolling log panel
-- Everything configurable through `config.ini` (key mapping, tuning, controls)
+  buffer size, output latency (as reported by PortAudio), xrun count, volume,
+  active notes and a scrolling log panel
+- Everything configurable through `config.ini` (keyboard layout, tuning,
+  temperament, control keys)
 
 ## Architecture
 
 Two processes, so UI work can never glitch the audio:
 
-- The **main process** handles keyboard input from stdin and renders the TUI with `rich`.
+- The **main process** handles keyboard input (see *Keyboard input* below) and
+  renders the TUI with `rich`.
 - The **audio process** owns the PortAudio output stream and synthesizes
   audio directly inside the stream callback.
 
@@ -56,7 +59,7 @@ Requires Python >= 3.11.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # on Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -130,6 +133,9 @@ python test_suite.py 1      # run a specific test
 
 ## Known limitations
 
-- Linux: stdin keyboard input works in any normal terminal.
-- Windows: not tested yet; terminal cbreak handling would need a small platform guard.
+- Linux: partially supported. Keyboard input works in terminals supporting the
+  kitty keyboard protocol (kitty, foot, WezTerm, Alacritty, Ghostty); the pynput
+  fallback only works under X11, not Wayland. PortAudio must be installed
+  (e.g. `apt install libportaudio2`).
+- Windows: not supported (the terminal handling relies on termios, Unix only).
 - Recording is not implemented yet.

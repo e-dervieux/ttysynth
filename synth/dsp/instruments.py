@@ -40,7 +40,8 @@ class Instrument(ABC):
 
 
 class Flute(Instrument):
-    """Flute instrument - sine wave with pink noise and soft attack/release"""
+    """Flute instrument - additive synthesis (sine + harmonics) with a soft
+    ADSR envelope (breath noise: TODO, see noise_level)"""
 
     def __init__(self, sample_rate: int):
         """
@@ -54,7 +55,7 @@ class Flute(Instrument):
         # ADSR parameters for flute
         self.attack_time = 0.05   # 50ms soft attack
         self.decay_time = 0.2     # 200ms decay
-        self.sustain_level = 0.8  # 90% sustain level
+        self.sustain_level = 0.8  # 80% sustain level
         self.release_time = 0.2   # 200ms release
 
         # TODO: breath noise (pink noise mixed into the tone), not
