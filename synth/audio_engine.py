@@ -36,7 +36,7 @@ import numpy as np
 import sounddevice as sd
 
 # Local imports
-from synth.dsp import Note, Flute, INSTRUMENTS
+from synth.dsp import Note, INSTRUMENTS
 from synth.config import AudioConfig
 from synth.errors import SynthError
 
@@ -171,12 +171,8 @@ class _AudioProcess:
 
         if cmd_type == 'PLAY_NOTE':
             key, frequency, instrument_type = command[1], command[2], command[3]
-            instrument_class = INSTRUMENTS.get(instrument_type)
-            if instrument_class is None:
-                log.warning(f"Unknown instrument '{instrument_type}', defaulting to flute")
-                instrument_class = Flute
-
-            note = Note(frequency, instrument_class(self.sample_rate), self.volume, key)
+            instrument = INSTRUMENTS[instrument_type](self.sample_rate)
+            note = Note(frequency, instrument, self.volume, key)
             with self.lock:
                 self.notes.append(note)
             log.debug(f"Created note: {key} -> {frequency:.1f}Hz ({instrument_type})")
@@ -201,7 +197,7 @@ class _AudioProcess:
             log.info("Audio process stopping")
 
         else:
-            log.warning(f"Unknown command: {cmd_type}")
+            raise ValueError(f"Unknown command: {cmd_type}")
 
     def _emit_status(self, stream):
         """Send a status snapshot to the main process (consumed by the TUI)"""
@@ -420,9 +416,6 @@ class AudioEngine:
                         process is stopped)
             AudioProcessCrash: bug in the audio process
         """
-        if self.running:
-            return
-
         self.running = True
         self._ready_event.clear()
         self._start_error = None
@@ -481,43 +474,3 @@ class AudioEngine:
         devices = sd.query_devices()
         log.info(str(devices))
 
-
-def test_basic_audio(duration=2.0, frequency=440.0):
-    """Test basic audio playback"""
-    log.info(f"Playing {frequency}Hz tone for {duration} seconds...")
-
-    sample_rate = 48000
-    t = np.linspace(0, duration, int(sample_rate * duration), False)
-    wave = 0.3 * np.sin(2 * np.pi * frequency * t)
-
-    sd.play(wave, sample_rate)
-    sd.wait()
-
-    log.info("Basic audio test completed")
-    return True
-
-
-def test_streaming_audio(duration=3.0):
-    """Test streaming audio"""
-    log.info(f"Testing streaming audio for {duration} seconds...")
-
-    sample_rate = 48000
-    block_size = 128
-
-    def callback(outdata, frames, time_info, status):
-        t = np.arange(frames) / sample_rate
-        t = t + callback.phase
-        wave = 0.2 * np.sin(2 * np.pi * 440 * t)
-        outdata[:, 0] = wave
-        callback.phase += frames / sample_rate
-
-    callback.phase = 0
-
-    with sd.OutputStream(callback=callback,
-                      channels=1,
-                      samplerate=sample_rate,
-                      blocksize=block_size):
-        time.sleep(duration)
-
-    log.info("Streaming audio test completed")
-    return True

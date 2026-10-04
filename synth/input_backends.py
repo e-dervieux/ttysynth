@@ -541,17 +541,26 @@ def start_input(on_key: Callable[[str, bool], None]) -> InputBackend:
         on_key: called with (key name, pressed) from the input thread
 
     Raises:
-        SynthError: no usable keyboard input (the terminal is restored)
+        SynthError: no usable keyboard input
+        Any exception raised while starting (Ctrl+C during the detection,
+        bug...): the terminal is restored in every case
     """
     if not sys.stdin.isatty():
         raise SynthError("Keyboard input unavailable: stdin is not a terminal")
 
     saved_term_attrs = _enter_cbreak()
-    backend_class = KittyInput if _detect_kitty_protocol() else PynputInput
-    backend = backend_class(on_key, saved_term_attrs)
+    backend = None
     try:
+        backend_class = KittyInput if _detect_kitty_protocol() else PynputInput
+        backend = backend_class(on_key, saved_term_attrs)
         backend.start()
-    except SynthError:
-        backend.stop()  # Restore the terminal before reporting
+    except BaseException:
+        # Restore the terminal before propagating, whatever went wrong:
+        # otherwise it stays in cbreak mode (no echo, and on some Python
+        # versions Enter no longer ends a line) after the program exits
+        if backend is not None:
+            backend.stop()
+        else:
+            _leave_cbreak(saved_term_attrs)
         raise
     return backend

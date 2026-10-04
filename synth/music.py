@@ -164,12 +164,3 @@ class MusicEngine:
         names = list(TEMPERAMENTS)
         self.temperament = names[(names.index(self.temperament) + 1) % len(names)]
         log.info(f"Temperament: {self.temperament}")
-
-    def note_to_frequency(self, note_name: str) -> float:
-        """Frequency in Hz of a note name (e.g., 'C4', 'F#5', 'Bb3')"""
-        return self.midi_to_frequency(note_to_midi(note_name))
-
-    def set_tuning(self, freq):
-        """Set A4 tuning frequency"""
-        self.tuning_freq = freq
-        log.info(f"Retuned to A4 = {freq} Hz")

@@ -10,8 +10,8 @@ synthesizes sound in its callback. See audio_engine.py for details.
 
 # Global imports
 import logging
+import signal
 import threading
-import time
 
 # Local imports
 from synth.config import CONTROLS, Config, load_config
@@ -36,7 +36,6 @@ class Synthesizer:
         """Initialize the synthesizer (raises ConfigError on an invalid
         keyboard configuration)"""
         self.running = False
-        self._stopped = False
         self._thread_error = None  # First exception of a crashed background thread
 
         self.music_engine = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
@@ -112,16 +111,12 @@ class Synthesizer:
         """Start the synthesizer (raises SynthError if a component cannot
         start; see run() for the cleanup)"""
         log.debug("Starting synthesizer...")
-        self.running = True
         self.audio_engine.start()
         self.keyboard_handler.start()
         log.debug("✅ Synthesizer started successfully!")
 
     def stop(self):
         """Stop the synthesizer"""
-        if self._stopped:
-            return
-        self._stopped = True
         self.running = False
 
         log.debug("Stopping synthesizer...")
@@ -149,7 +144,18 @@ class Synthesizer:
             log.debug(f"Thread '{thread_name}' failed, shutting down: {args.exc_value!r}")
         self.running = False
 
-    def run(self, use_tui=True):
+    def _on_sigint(self, signum, frame):
+        """
+        SIGINT handler (Ctrl+C): request the quit, like the quit key. Unlike
+        the default KeyboardInterrupt, which could strike anywhere, cleanup
+        included (repeated Ctrl+C left the terminal unrestored), the shutdown
+        then always runs to the end.
+        """
+        if self.running:
+            log.info("Interrupted (Ctrl+C)")
+            self.running = False
+
+    def run(self):
         """
         Run the synthesizer (blocking). Components are always stopped on
         exit, including when starting one of them failed.
@@ -158,21 +164,19 @@ class Synthesizer:
             SynthError: expected failure (see errors.py)
             Exception: the exception of a crashed background thread, if any
         """
+        # Set before the SIGINT handler: a Ctrl+C during the startup must not
+        # be overwritten by it (the TUI then exits at once)
+        self.running = True
+        previous_sigint = signal.signal(signal.SIGINT, self._on_sigint)
         previous_hook = threading.excepthook
         threading.excepthook = self._on_thread_crash
         try:
             self.start()
-            if use_tui:
-                SynthTUI(self).run()
-            else:
-                while self.running:
-                    time.sleep(0.1)
-        except KeyboardInterrupt:
-            # Ctrl+C is a normal way to quit
-            log.info("Interrupted (Ctrl+C)")
+            SynthTUI(self).run()
         finally:
             self.stop()
             threading.excepthook = previous_hook
+            signal.signal(signal.SIGINT, previous_sigint)
 
         if self._thread_error is not None:
             raise self._thread_error

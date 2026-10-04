@@ -8,12 +8,56 @@ import sys
 import threading
 import time
 
+import numpy as np
+import sounddevice as sd
+
 # Local imports
-from synth.music import MusicEngine, midi_to_note
+from synth.music import MusicEngine, midi_to_note, note_to_midi
 from synth.keyboard_handler import KeyboardHandler
-from synth.audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
+from synth.audio_engine import AudioEngine
 from synth.config import load_config
 from synth.logging_setup import setup_logging
+
+def test_basic_audio(duration=2.0, frequency=440.0):
+    """Test basic audio playback"""
+    print(f"Playing {frequency}Hz tone for {duration} seconds...")
+
+    sample_rate = 48000
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    wave = 0.3 * np.sin(2 * np.pi * frequency * t)
+
+    sd.play(wave, sample_rate)
+    sd.wait()
+
+    print("Basic audio test completed")
+    return True
+
+
+def test_streaming_audio(duration=3.0):
+    """Test streaming audio"""
+    print(f"Testing streaming audio for {duration} seconds...")
+
+    sample_rate = 48000
+    block_size = 128
+
+    def callback(outdata, frames, time_info, status):
+        t = np.arange(frames) / sample_rate
+        t = t + callback.phase
+        wave = 0.2 * np.sin(2 * np.pi * 440 * t)
+        outdata[:, 0] = wave
+        callback.phase += frames / sample_rate
+
+    callback.phase = 0
+
+    with sd.OutputStream(callback=callback,
+                      channels=1,
+                      samplerate=sample_rate,
+                      blocksize=block_size):
+        time.sleep(duration)
+
+    print("Streaming audio test completed")
+    return True
+
 
 def test_music_engine():
     """Test 1: Music Engine Test"""
@@ -31,20 +75,14 @@ def test_music_engine():
         test_notes = ['C4', 'D4', 'E4', 'C#4', 'D#4']
         print("\n🎵 Testing some note frequencies:")
         for note in test_notes:
-            freq = music.note_to_frequency(note)
+            freq = music.midi_to_frequency(note_to_midi(note))
             print(f"  {note} -> {freq:.1f} Hz")
         
         # Test tuning change
         print("\n🎼 Testing tuning change:")
-        original_freq = music.note_to_frequency('A4')
-        print(f"  A4 at 440 Hz: {original_freq:.1f} Hz")
-        
-        music.set_tuning(442.0)  # Slightly higher tuning
-        new_freq = music.note_to_frequency('A4')
-        print(f"  A4 at 442 Hz: {new_freq:.1f} Hz")
-        
-        # Reset to standard tuning
-        music.set_tuning(440.0)
+        print(f"  A4 at 440 Hz: {music.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
+        retuned = MusicEngine(442.0, audio_config.temperament)  # Slightly higher tuning
+        print(f"  A4 at 442 Hz: {retuned.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
         
         return True
         

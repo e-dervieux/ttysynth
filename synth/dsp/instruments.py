@@ -37,7 +37,6 @@ class Instrument(ABC):
         Returns:
             Audio buffer as numpy array (envelope will be applied by Note)
         """
-        pass
 
 
 class Flute(Instrument):
@@ -58,10 +57,10 @@ class Flute(Instrument):
         self.sustain_level = 0.8  # 90% sustain level
         self.release_time = 0.2   # 200ms release
 
-        # Flute-specific parameters
-        # TODO: not implemented yet
-        self.noise_level = 0.00  # 5% pink noise
-        self.noise_state = 0.0   # State for pink noise filter
+        # TODO: breath noise (pink noise mixed into the tone), not
+        # implemented yet: these parameters are unused for now
+        self.noise_level = 0.0   # Noise amplitude relative to the tone
+        self.noise_state = 0.0   # State of the pink noise filter
 
         # Harmonics
         self.harmonics = [1, 0.2, 0.14, 0, 0.05]
