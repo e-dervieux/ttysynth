@@ -406,6 +406,36 @@ class PynputInput(InputBackend):
         super().__init__(on_key, saved_term_attrs)
         self._listener = None
         self._input_monitoring_ok = True
+        self._pk = None             # pynput.keyboard module, see _setup_keys
+        self._shortcut_mods = set()
+        self._held_mods = set()
+
+    def _setup_keys(self, pk):
+        """
+        pynput does not report modifiers with key events: track the ones
+        turning a press into a shortcut (no key reported), as the kitty
+        backend does. Shift is excluded (needed for '+' on many layouts),
+        and so is AltGr (used to type characters).
+        """
+        self._pk = pk
+        self._shortcut_mods = {pk.Key.ctrl, pk.Key.ctrl_l, pk.Key.ctrl_r,
+                               pk.Key.alt, pk.Key.alt_l, pk.Key.alt_r,
+                               pk.Key.cmd, pk.Key.cmd_l, pk.Key.cmd_r}
+        self._held_mods = set()
+
+    def _on_press(self, key):
+        """pynput press callback (listener thread)"""
+        if key in self._shortcut_mods:
+            self._held_mods.add(key)
+        elif not self._held_mods:
+            key_name = self._key_name(key, self._pk)
+            if key_name:
+                self._key_down(self._key_id(key), key_name)
+
+    def _on_release(self, key):
+        """pynput release callback (listener thread)"""
+        self._held_mods.discard(key)
+        self._key_up(self._key_id(key))
 
     def start(self):
         """Start the global listener and run macOS diagnostics (raises
@@ -420,29 +450,9 @@ class PynputInput(InputBackend):
                 f"protocol, and pynput cannot be used ({e}). Install pynput, or use a "
                 f"terminal supporting the protocol ({_KITTY_TERMINALS}).") from e
 
-        # pynput does not report modifiers with key events: track the ones
-        # turning a press into a shortcut (no key reported), as the kitty
-        # backend does. Shift is excluded (needed for '+' on many layouts),
-        # and so is AltGr (used to type characters).
-        shortcut_mods = {pk.Key.ctrl, pk.Key.ctrl_l, pk.Key.ctrl_r,
-                         pk.Key.alt, pk.Key.alt_l, pk.Key.alt_r,
-                         pk.Key.cmd, pk.Key.cmd_l, pk.Key.cmd_r}
-        held_mods = set()
-
-        def on_press(key):
-            if key in shortcut_mods:
-                held_mods.add(key)
-            elif not held_mods:
-                key_name = self._key_name(key, pk)
-                if key_name:
-                    self._key_down(self._key_id(key), key_name)
-
-        def on_release(key):
-            held_mods.discard(key)
-            self._key_up(self._key_id(key))
-
+        self._setup_keys(pk)
         self.running = True
-        self._listener = pk.Listener(on_press=on_press, on_release=on_release)
+        self._listener = pk.Listener(on_press=self._on_press, on_release=self._on_release)
         self._listener.start()
         self._listener.wait()
         log.info(f"Keyboard input: global hook (pynput). For native terminal key handling, "

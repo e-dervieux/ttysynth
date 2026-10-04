@@ -48,7 +48,8 @@ synth/
   music.py           note names, MIDI numbers, frequencies
   tui.py             full-screen terminal interface (rich)
   config.py, errors.py, logging_setup.py
-test_suite.py        interactive test menu
+tests/               automated tests (pytest), see For developers
+manual_tests.py      interactive checks with the real audio device and keyboard
 ```
 
 ## Installation
@@ -121,14 +122,45 @@ any note to any character key, sharps or flats. The file explains its
 format. Mappings are checked at startup: an invalid note or key, or a key
 used twice (by notes or controls), is an error.
 
-## Tests
+## For developers
 
-An interactive test suite covers the music engine, keyboard handler and
-audio engine:
+### Development install
+
+On top of the installation above, install the development tools (pytest):
 
 ```bash
-python test_suite.py        # interactive menu
-python test_suite.py 1      # run a specific test
+python -m pip install -r requirements-dev.txt   # or: uv pip install -r requirements-dev.txt
+```
+
+### Automated tests
+
+```bash
+python -m pytest              # all tests (a few seconds)
+python -m pytest -q           # quieter
+python -m pytest tests/test_music.py -k werckmeister  # one file, tests matching a name
+```
+
+`python -m pytest` runs pytest with the Python of the active environment,
+even when another `pytest` (e.g. from a base conda installation) comes first
+on the `PATH`.
+
+The tests need no audio device, keyboard or terminal: a fake `sounddevice`
+module (`tests/fakes/sounddevice.py`) stands in for the audio device, also
+in the audio processes the tests start, and simulates its failures (stream
+that cannot be opened, device lost, crashes...). They cover note names and
+temperaments, layouts and configuration validation, the keyboard input
+parsing, the musical keyboard, the envelope and instruments (including the
+Karplus-Strong pitch), the audio process lifecycle and failure reporting,
+and the application (control actions, Ctrl+C, crashed threads, exit codes).
+
+### Manual tests
+
+What only an ear and a real keyboard can check (actual sound, key capture
+in your terminal) is in an interactive menu:
+
+```bash
+python manual_tests.py      # menu
+python manual_tests.py 3    # one test (here: a tone on the audio device)
 ```
 
 ## Known limitations

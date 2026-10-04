@@ -1,5 +1,7 @@
 """
-Comprehensive test suite for the synthesizer components
+Manual tests: an interactive menu of checks with the real audio device and
+keyboard, to be verified by ear and by hand (python manual_tests.py).
+The automated tests are in tests/ (run with pytest, see README.md).
 """
 
 # Global imports
@@ -280,7 +282,7 @@ def test_full_integration():
 
 def run_all_tests():
     """Run all tests"""
-    print("🧪 SYNTHESIZER TEST SUITE")
+    print("🧪 SYNTHESIZER MANUAL TESTS")
     print("=" * 60)
     
     tests = [
@@ -355,7 +357,7 @@ def main():
             return 1
     else:
         # Interactive menu
-        print("🧪 SYNTHESIZER TEST SUITE")
+        print("🧪 SYNTHESIZER MANUAL TESTS")
         print("=" * 40)
         print("Select a test to run:")
         print("  1: Music Engine Test")
@@ -392,5 +394,5 @@ def main():
 
 if __name__ == "__main__":
     setup_logging(logging.DEBUG)
-    print("Running test suite...")
+    print("Running manual tests...")
     sys.exit(main()) 
