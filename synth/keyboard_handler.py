@@ -13,11 +13,11 @@ import threading
 from typing import Callable, Dict
 
 # Local imports
-from config import KeyboardConfig
-from errors import ConfigError
-from input_backends import InputBackend, start_input
-from keymap import build_all_keymaps
-from music import MIDI_MAX, MIDI_MIN, midi_to_note
+from synth.config import KeyboardConfig
+from synth.errors import ConfigError
+from synth.input_backends import InputBackend, start_input
+from synth.keymap import build_all_keymaps
+from synth.music import MIDI_MAX, MIDI_MIN, midi_to_note
 
 log = logging.getLogger(__name__)
 

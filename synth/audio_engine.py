@@ -36,9 +36,9 @@ import numpy as np
 import sounddevice as sd
 
 # Local imports
-from classes import Note, Flute, INSTRUMENTS
-from config import AudioConfig
-from errors import SynthError
+from synth.dsp import Note, Flute, INSTRUMENTS
+from synth.config import AudioConfig
+from synth.errors import SynthError
 
 log = logging.getLogger(__name__)
 

@@ -20,9 +20,9 @@ from rich.table import Table
 from rich.text import Text
 
 # Local imports
-from config import CONTROLS
-from logging_setup import console_paused, format_record, log_history
-from music import midi_to_note
+from synth.config import CONTROLS
+from synth.logging_setup import console_paused, format_record, log_history
+from synth.music import midi_to_note
 
 REFRESH_PERIOD = 0.1  # seconds between renders (~10 Hz)
 

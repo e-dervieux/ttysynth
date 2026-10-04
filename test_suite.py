@@ -9,11 +9,11 @@ import threading
 import time
 
 # Local imports
-from music import MusicEngine, midi_to_note
-from keyboard_handler import KeyboardHandler
-from audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
-from config import load_config
-from logging_setup import setup_logging
+from synth.music import MusicEngine, midi_to_note
+from synth.keyboard_handler import KeyboardHandler
+from synth.audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
+from synth.config import load_config
+from synth.logging_setup import setup_logging
 
 def test_music_engine():
     """Test 1: Music Engine Test"""

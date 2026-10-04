@@ -28,6 +28,23 @@ Only tiny command messages (note on/off, volume, stop) cross the process
 boundary; no audio data is ever transferred. A low-rate status queue flows
 back (latency, xruns, voice count) to feed the TUI.
 
+## Project layout
+
+```
+main.py              entry point (python main.py, or python -m synth)
+config.ini           settings (audio, keyboard layout, control keys)
+custom_layout.ini    custom note layout (LAYOUT = custom)
+synth/
+  app.py             Synthesizer: coordinates the components, control actions
+  audio_engine.py    audio process (PortAudio stream, synthesis in its callback)
+  dsp/               instruments and notes (sound generation, envelopes)
+  keyboard_handler.py, keymap.py, input_backends.py   keyboard input and layouts
+  music.py           note names, MIDI numbers, frequencies
+  tui.py             full-screen terminal interface (rich)
+  config.py, errors.py, logging_setup.py
+test_suite.py        interactive test menu
+```
+
 ## Installation
 
 Requires Python >= 3.11.

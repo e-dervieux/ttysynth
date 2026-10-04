@@ -41,7 +41,7 @@ import tty
 from typing import Callable, Optional
 
 # Local imports
-from errors import SynthError
+from synth.errors import SynthError
 
 log = logging.getLogger(__name__)
 

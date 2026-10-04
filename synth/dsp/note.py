@@ -3,11 +3,20 @@ Note class for individual note management
 """
 
 # Global imports
+from enum import IntEnum
+
 import numpy as np
 
 # Local imports
-from classes.instrument import Instrument
-from utils.constants import ATTACK, DECAY, SUSTAIN, RELEASE
+from synth.dsp.instruments import Instrument
+
+
+class Phase(IntEnum):
+    """ADSR envelope phases (values index Note.phase_duration)"""
+    ATTACK = 0
+    DECAY = 1
+    SUSTAIN = 2
+    RELEASE = 3
 
 
 class Note:
@@ -34,7 +43,7 @@ class Note:
         self.sample_rate = instrument.sample_rate
 
         # ADSR state
-        self.phase = ATTACK
+        self.phase = Phase.ATTACK
         self.phase_start_sample = 0
         self.current_envelope = 0.0  # Track current envelope value for smooth transitions
         self.release_start_envelope = 0.0  # Envelope value when release started
@@ -44,17 +53,17 @@ class Note:
         # Read ADSR parameters from instrument
         self.sustain_level = instrument.sustain_level
         self.phase_duration = [
-            int(instrument.attack_time * self.sample_rate),   # ATTACK
-            int(instrument.decay_time * self.sample_rate),    # DECAY
-            float('inf'),                                     # SUSTAIN
-            int(instrument.release_time * self.sample_rate)   # RELEASE
+            int(instrument.attack_time * self.sample_rate),   # Phase.ATTACK
+            int(instrument.decay_time * self.sample_rate),    # Phase.DECAY
+            float('inf'),                                     # Phase.SUSTAIN
+            int(instrument.release_time * self.sample_rate)   # Phase.RELEASE
         ]
 
     def release(self):
         """Trigger the release phase (called when key is released)"""
         if not self.is_released:
             self.is_released = True
-            self.phase = RELEASE
+            self.phase = Phase.RELEASE
             self.phase_start_sample = self.t_int
             self.release_start_envelope = self.current_envelope  # Start from current value!
 
@@ -68,31 +77,31 @@ class Note:
         Returns:
             Array of envelope values
         """
-        if self.phase == ATTACK:
+        if self.phase == Phase.ATTACK:
             return phase_progress
 
-        elif self.phase == DECAY:
+        elif self.phase == Phase.DECAY:
             return 1.0 - (1.0 - self.sustain_level) * phase_progress
 
-        elif self.phase == SUSTAIN:
+        elif self.phase == Phase.SUSTAIN:
             return np.full_like(phase_progress, self.sustain_level)
 
-        elif self.phase == RELEASE:
+        elif self.phase == Phase.RELEASE:
             return self.release_start_envelope * (1.0 - phase_progress)
 
         return np.zeros_like(phase_progress)
 
     def _transition_to_next_phase(self):
         """Transition to the next phase"""
-        if self.phase == ATTACK:
-            self.phase = DECAY
+        if self.phase == Phase.ATTACK:
+            self.phase = Phase.DECAY
             self.phase_start_sample = self.t_int
 
-        elif self.phase == DECAY:
-            self.phase = SUSTAIN
+        elif self.phase == Phase.DECAY:
+            self.phase = Phase.SUSTAIN
             self.phase_start_sample = self.t_int
 
-        elif self.phase == RELEASE:
+        elif self.phase == Phase.RELEASE:
             self.ended = True
 
     def get_next_buffer(self, num_samples: int) -> np.ndarray:
@@ -128,7 +137,7 @@ class Note:
             samples_to_process = min(samples_remaining_in_phase, samples_remaining_in_buffer)
 
             # Handle sustain phase (infinite duration)
-            if self.phase == SUSTAIN:
+            if self.phase == Phase.SUSTAIN:
                 samples_to_process = samples_remaining_in_buffer
 
             # Calculate phase progress for this segment (vectorized)
@@ -155,7 +164,7 @@ class Note:
             samples_processed = end_idx
 
             # Check if we need to transition to next phase
-            if samples_to_process >= samples_remaining_in_phase and self.phase != SUSTAIN:
+            if samples_to_process >= samples_remaining_in_phase and self.phase != Phase.SUSTAIN:
                 self._transition_to_next_phase()
 
         # Apply envelope window and volume

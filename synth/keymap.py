@@ -17,8 +17,8 @@ import logging
 from pathlib import Path
 
 # Local imports
-from errors import ConfigError
-from music import MIDI_MAX, MIDI_MIN, midi_to_note, note_to_midi
+from synth.errors import ConfigError
+from synth.music import MIDI_MAX, MIDI_MIN, midi_to_note, note_to_midi
 
 log = logging.getLogger(__name__)
 

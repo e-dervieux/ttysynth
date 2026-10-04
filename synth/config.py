@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Local imports
-from errors import ConfigError
-from keymap import LAYOUT_NAMES, normalize_key
+from synth.errors import ConfigError
+from synth.keymap import LAYOUT_NAMES, normalize_key
 
-# Default configuration file, next to the code (not relative to the current
+# Default configuration file, at the project root (not relative to the current
 # directory, so that the synthesizer can be started from anywhere)
-DEFAULT_CONFIG_PATH = Path(__file__).parent / 'config.ini'
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / 'config.ini'
 
 # Controls: {name, as in the [CONTROLS] section (lowercase here): label}.
 # The TUI lists them in this order; Synthesizer maps each name to its action.
