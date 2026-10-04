@@ -12,6 +12,9 @@ Architecture (hybrid two-process design):
   can never delay the audio callback.
 - A low-rate status queue flows back to the main process: log messages,
   xrun count, measured latency and active voice count (displayed by the TUI).
+- Failures of the audio process (stream lost, bug, unexpected death) are
+  reported through the status queue too, and shut the synthesizer down (see
+  AudioEngine._status_reader).
 
 No audio buffers ever cross the process boundary, which keeps latency at
 "stream latency + one buffer" and avoids the pacing/teardown issues of
@@ -23,8 +26,10 @@ import configparser
 import multiprocessing as mp
 import queue
 import signal
+import sys
 import threading
 import time
+import traceback
 
 import numpy as np
 import sounddevice as sd
@@ -42,6 +47,11 @@ HEADROOM = 1.0 / 3.0
 
 # How often the audio process reports its status to the main process (seconds)
 STATUS_PERIOD = 0.1
+
+
+class AudioProcessCrash(RuntimeError):
+    """A bug in the audio process. Exceptions cannot cross the process
+    boundary: the message holds the audio process traceback."""
 
 
 def saturate_audio(buffer: np.ndarray) -> np.ndarray:
@@ -77,6 +87,9 @@ class _AudioProcess:
 
         self.xruns = 0
         self.running = True
+        # Traceback of an exception raised in the audio callback, reported
+        # by the command loop
+        self.callback_error = None
 
     def send_log(self, msg, level=0):
         """Forward a log message to the main process (single owner of stdout)"""
@@ -87,23 +100,33 @@ class _AudioProcess:
         PortAudio callback - runs on the real-time audio thread.
         Mixes all active notes, soft-clips, and writes to the output buffer.
         """
-        if status:
-            # Underflow/overflow reported by PortAudio: count it, the status
-            # loop will report it to the UI (no logging from the RT thread).
-            self.xruns += 1
+        # The try block costs nothing until an exception is raised (zero-cost
+        # exception handling, Python >= 3.11)
+        try:
+            if status:
+                # Underflow/overflow reported by PortAudio: count it, the
+                # status loop will report it to the UI (no logging from the
+                # RT thread).
+                self.xruns += 1
 
-        buffer = np.zeros(frames, dtype=np.float32)
+            buffer = np.zeros(frames, dtype=np.float32)
 
-        with self.lock:
-            if self.notes:
-                for note in self.notes:
-                    buffer += note.get_next_buffer(frames)
-                # Prune notes whose release phase has completed
-                self.notes = [note for note in self.notes if not note.ended]
-                buffer = saturate_audio(buffer)
+            with self.lock:
+                if self.notes:
+                    for note in self.notes:
+                        buffer += note.get_next_buffer(frames)
+                    # Prune notes whose release phase has completed
+                    self.notes = [note for note in self.notes if not note.ended]
+                    buffer = saturate_audio(buffer)
 
-        for ch in range(self.channels):
-            outdata[:, ch] = buffer
+            for ch in range(self.channels):
+                outdata[:, ch] = buffer
+        except Exception:
+            # Exceptions must not reach PortAudio's C caller (cffi would print
+            # them over the UI and abort the stream): keep the traceback for
+            # the command loop to report, and stop the stream cleanly.
+            self.callback_error = traceback.format_exc()
+            raise sd.CallbackAbort
 
     def _create_stream(self) -> sd.OutputStream:
         """Create and start the output stream, trying several latency settings"""
@@ -185,15 +208,17 @@ class _AudioProcess:
         }))
 
     def run(self):
-        """Main loop of the audio process: consume commands, emit status"""
+        """
+        Main loop of the audio process: consume commands, emit status, and
+        watch the stream. Returns on 'STOP', or after reporting a failure
+        ('ERROR': expected, e.g. device lost; 'CRASH': bug in the callback).
+        Other exceptions are bugs, reported by audio_process_main.
+        """
         try:
             stream = self._create_stream()
         except sd.PortAudioError as e:
-            # Expected failure (device unavailable, unsupported settings...),
-            # reported to the user by AudioEngine.start(). Other exceptions
-            # are bugs: they propagate (see issue 6 for their detection).
+            # Expected failure (device unavailable, unsupported settings...)
             self.status_queue.put(('ERROR', f"Could not create audio stream: {e}"))
-            self.status_queue.put(('EXIT',))
             return
 
         self.status_queue.put(('READY',))
@@ -211,6 +236,13 @@ class _AudioProcess:
 
                 now = time.monotonic()
                 if now - last_status_time >= STATUS_PERIOD:
+                    if self.callback_error is not None:
+                        self.status_queue.put(('CRASH', self.callback_error))
+                        return
+                    if not stream.active:
+                        self.status_queue.put(('ERROR', "Audio stream stopped unexpectedly "
+                                                        "(output device disconnected?)"))
+                        return
                     self._emit_status(stream)
                     last_status_time = now
         finally:
@@ -218,8 +250,6 @@ class _AudioProcess:
             # interpreter is still fully alive: no teardown race possible.
             stream.stop()
             stream.close()
-            self.send_log("Audio process stopped cleanly", 1)
-            self.status_queue.put(('EXIT',))
 
 
 def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, channels, default_volume):
@@ -232,7 +262,15 @@ def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, ch
 
     process = _AudioProcess(command_queue, status_queue, sample_rate,
                             buffer_size, channels, default_volume)
-    process.run()
+    try:
+        process.run()
+    except Exception:
+        # A bug: report it to the main process, which owns the terminal and
+        # raises it, instead of printing it over the UI
+        status_queue.put(('CRASH', traceback.format_exc()))
+        sys.exit(1)
+    process.send_log("Audio process stopped", 1)
+    status_queue.put(('EXIT',))
 
 
 class AudioEngine:
@@ -275,7 +313,7 @@ class AudioEngine:
         self.latest_status = {}
         self._status_thread = None
         self._ready_event = threading.Event()
-        self._start_error = None
+        self._start_error = None  # Failure of the audio process before READY
 
         log(f"Audio engine initialized: {self.sample_rate}Hz, {self.buffer_size} samples, "
             f"{self.channels} channel(s)", 1)
@@ -317,28 +355,51 @@ class AudioEngine:
         if self.running:
             self.command_queue.put(('STOP_NOTE', key))
 
-    def _status_reader(self):
-        """Thread consuming the status queue: logs, status snapshots, lifecycle"""
+    def _status_reader(self, process: mp.Process):
+        """
+        Thread consuming the status queue: logs, status snapshots, lifecycle.
+
+        A failure of the audio process (reported 'ERROR' or 'CRASH', or
+        unexpected exit / death) is handed to start() if the stream is not
+        ready yet. Afterwards it is raised here: through threading.excepthook,
+        it shuts the synthesizer down (see Synthesizer.run).
+        """
         while True:
+            failure = None
             try:
                 item = self.status_queue.get(timeout=0.5)
             except queue.Empty:
-                if not self.running and (self.process is None or not self.process.is_alive()):
-                    break
-                continue
+                # Queue drained: a dead process sent everything it could
+                if process.is_alive():
+                    continue
+                if not self.running:
+                    break  # Stopped by stop(), which may have terminated it
+                code = process.exitcode
+                cause = f"killed by signal {-code}" if code < 0 else f"exit code {code}"
+                failure = SynthError(f"Audio process died unexpectedly ({cause})")
+            else:
+                kind = item[0]
+                if kind == 'LOG':
+                    log(item[1], item[2])
+                elif kind == 'STATUS':
+                    self.latest_status = item[1]
+                elif kind == 'READY':
+                    self._ready_event.set()
+                elif kind == 'ERROR':
+                    failure = SynthError(item[1])
+                elif kind == 'CRASH':
+                    failure = AudioProcessCrash(f"Audio process crashed:\n{item[1]}")
+                elif kind == 'EXIT':
+                    if not self.running:
+                        break  # Normal stop
+                    failure = SynthError("Audio process exited unexpectedly")
 
-            kind = item[0]
-            if kind == 'LOG':
-                log(item[1], item[2])
-            elif kind == 'STATUS':
-                self.latest_status = item[1]
-            elif kind == 'READY':
+            if failure is not None:
+                if self._ready_event.is_set():
+                    raise failure
+                self._start_error = failure
                 self._ready_event.set()
-            elif kind == 'ERROR':
-                self._start_error = item[1]
-                self._ready_event.set()
-            elif kind == 'EXIT':
-                break
+                return
 
     def start(self):
         """
@@ -347,6 +408,7 @@ class AudioEngine:
         Raises:
             SynthError: the audio stream could not be started (the audio
                         process is stopped)
+            AudioProcessCrash: bug in the audio process
         """
         if self.running:
             return
@@ -364,7 +426,7 @@ class AudioEngine:
         )
         self.process.start()
 
-        self._status_thread = threading.Thread(target=self._status_reader,
+        self._status_thread = threading.Thread(target=self._status_reader, args=(self.process,),
                                                name='status-reader', daemon=True)
         self._status_thread.start()
 
@@ -375,7 +437,7 @@ class AudioEngine:
 
         if self._start_error is not None:
             self.stop()
-            raise SynthError(self._start_error)
+            raise self._start_error
 
         log("Audio engine started successfully", 1)
 
