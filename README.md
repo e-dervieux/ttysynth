@@ -76,17 +76,26 @@ when you quit.
 
 ### Default controls (see `config.ini`)
 
-- Notes: two chromatic octaves starting at C4, laid out on letter keys
-  (`q` = C4, `z` = C#4, `s` = D4, ... AZERTY-friendly layout)
+- Notes: C4 to E5, laid out like a piano keyboard (natural notes on the
+  home row, sharps above): `a` = C4, `w` = C#4, `s` = D4, ... with the
+  default QWERTY layout, `q` = C4, `z` = C#4, `s` = D4, ... with AZERTY
 - `+` / `-`: volume up / down
 - `tab`: switch instrument (flute / pluck)
-- `w` / `x`: start / stop recording (not implemented yet)
+- `v`: switch layout (azerty / qwerty / custom)
+- `(` / `)`: octave down / up
+- `b` / `n`: start / stop recording (not implemented yet)
 - `esc`: quit
 
 ### Configuration
 
 Edit `config.ini` to change the sample rate, buffer size, tuning frequency
-(A4), base note, key-to-note mapping and control keys.
+(A4), initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
+shift and control keys.
+
+With `LAYOUT = custom`, notes are mapped to keys in `custom_layout.ini`:
+any note to any character key, sharps or flats. The file explains its
+format. Mappings are checked at startup: an invalid note or key, or a key
+used twice (by notes or controls), is an error.
 
 ## Tests
 

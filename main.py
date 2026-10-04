@@ -11,7 +11,7 @@ synthesizes sound in its callback. See audio_engine.py for details.
 import time
 
 # Local imports
-from music import MusicEngine
+from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine
 from classes import INSTRUMENTS
@@ -53,16 +53,16 @@ class Synthesizer:
         """Name of the currently selected instrument"""
         return self.instrument_names[self.instrument_index]
 
-    def on_note_on(self, key, note_name):
+    def on_note_on(self, key, midi):
         """Handle note on events"""
-        frequency = self.music_engine.note_to_frequency(note_name)
+        frequency = self.music_engine.midi_to_frequency(midi)
         self.audio_engine.play_note(key, frequency, instrument_type=self.current_instrument)
-        log(f"♪ {key} -> {note_name} ({frequency:.1f} Hz)", 0)
+        log(f"♪ {key} -> {midi_to_note(midi)} ({frequency:.1f} Hz)", 0)
 
-    def on_note_off(self, key, note_name):
+    def on_note_off(self, key, midi):
         """Handle note off events"""
         self.audio_engine.stop_note(key)
-        log(f"♫ {key} -> {note_name} (off)", 0)
+        log(f"♫ {key} -> {midi_to_note(midi)} (off)", 0)
 
     def on_volume_change(self, volume):
         """Handle volume change events"""

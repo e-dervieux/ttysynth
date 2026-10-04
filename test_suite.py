@@ -7,7 +7,7 @@ import sys
 import time
 
 # Local imports
-from music import MusicEngine
+from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler, test_keyboard
 from audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
 
@@ -194,15 +194,14 @@ def test_full_integration():
         print("✅ All components initialized")
         
         # Test callbacks
-        def on_note_on(key, note_name):
-            freq = music.note_to_frequency(note_name)
-            if freq > 0:
-                audio.play_note(key, freq)
-                print(f"♪ {key} -> {note_name} ({freq:.1f} Hz)")
+        def on_note_on(key, midi):
+            freq = music.midi_to_frequency(midi)
+            audio.play_note(key, freq)
+            print(f"♪ {key} -> {midi_to_note(midi)} ({freq:.1f} Hz)")
         
-        def on_note_off(key, note_name):
+        def on_note_off(key, midi):
             audio.stop_note(key)
-            print(f"♫ {key} -> {note_name} (off)")
+            print(f"♫ {key} -> {midi_to_note(midi)} (off)")
         
         keyboard.set_callbacks(on_note_on=on_note_on, on_note_off=on_note_off)
         

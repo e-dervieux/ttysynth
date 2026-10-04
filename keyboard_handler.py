@@ -32,10 +32,13 @@ import termios
 import threading
 import time
 import tty
-from typing import Callable, Optional, Set
+from pathlib import Path
+from typing import Callable, Dict, Optional
 
 # Local imports
+from keymap import build_all_keymaps, normalize_key
 from logger import log
+from music import MIDI_MAX, MIDI_MIN, midi_to_note
 
 # Kitty protocol progressive enhancement flags:
 # 1 = disambiguate escape codes, 2 = report event types (press/repeat/release),
@@ -94,15 +97,19 @@ def _secure_input_active() -> bool:
 
 
 class KeyboardHandler:
-    """Keyboard events, layout mapping, and base note conversion"""
+    """Keyboard events and key mapping (notes and controls)"""
 
     def __init__(self, config_file):
         self.config_file = config_file
         config = configparser.ConfigParser()
         config.read(config_file)
-        self.base_note = config.get('AUDIO', 'BASE_NOTE', fallback='C4')
-        self.key_to_note = {}
-        self.pressed_keys: Set[str] = set()
+        self.keymaps = {}      # {layout name: keymap}, available layouts in cycling order
+        self.layout = None     # Name of the current layout
+        self.key_to_midi = {}  # Keymap of the current layout: {normalized key: MIDI note}
+        self.octave_shift = 0  # Octaves added to the notes of the layout
+        # Held note keys, with the note each one started: a release stops that
+        # note even if the layout changed in the meantime
+        self.pressed_keys: Dict[str, int] = {}
         self.key_lock = threading.Lock()
         # Physical key id -> key name resolved at press time. Releases are
         # looked up here rather than resolved again, as the resolved name
@@ -132,35 +139,73 @@ class KeyboardHandler:
         self.load_key_mapping()
 
     def load_key_mapping(self):
-        """Load key mapping from configuration file and convert to actual notes"""
+        """Load the control keys and the note layout from the configuration
+        file (raises ValueError on an invalid or conflicting mapping)"""
         config = configparser.ConfigParser()
         config.read(self.config_file)
 
-        self.control_keys = {
+        controls = {
             'volume_up': config.get('CONTROLS', 'VOLUME_UP', fallback='+'),
             'volume_down': config.get('CONTROLS', 'VOLUME_DOWN', fallback='-'),
             'quit': config.get('CONTROLS', 'QUIT', fallback='esc'),
-            'record_start': config.get('CONTROLS', 'RECORD_START', fallback='w'),
-            'record_stop': config.get('CONTROLS', 'RECORD_STOP', fallback='x'),
+            'record_start': config.get('CONTROLS', 'RECORD_START', fallback='b'),
+            'record_stop': config.get('CONTROLS', 'RECORD_STOP', fallback='n'),
             'instrument_next': config.get('CONTROLS', 'INSTRUMENT_NEXT', fallback='tab'),
+            'layout_next': config.get('CONTROLS', 'LAYOUT_NEXT', fallback='v'),
+            'octave_down': config.get('CONTROLS', 'OCTAVE_DOWN', fallback='('),
+            'octave_up': config.get('CONTROLS', 'OCTAVE_UP', fallback=')'),
         }
+        self.control_keys = {action: normalize_key(key, f"control {action}")
+                             for action, key in controls.items()}
 
-        base_octave = int(self.base_note[-1])
-        for layout_note, key in config['KEYS'].items():
-            note_name = layout_note[:-1]
-            octave_offset = int(layout_note[-1])
-            actual_note = f"{note_name}{base_octave + octave_offset}"
-            self.key_to_note[key] = actual_note.upper()
+        self.layout = config.get('KEYBOARD', 'LAYOUT', fallback='qwerty')
+        # The custom layout path is relative to the configuration file
+        custom_file = Path(self.config_file).parent / config.get(
+            'KEYBOARD', 'CUSTOM_LAYOUT', fallback='custom_layout.ini')
+        self.keymaps = build_all_keymaps(self.layout, custom_file, self.control_keys)
+        self.key_to_midi = self.keymaps[self.layout]
+        self.octave_shift = config.getint('KEYBOARD', 'OCTAVE_SHIFT', fallback=0)
+        if not self._octave_shift_fits(self.octave_shift):
+            raise ValueError(f"OCTAVE_SHIFT = {self.octave_shift} puts notes of layout '{self.layout}' "
+                             f"outside the playable range ({midi_to_note(MIDI_MIN)} to "
+                             f"{midi_to_note(MIDI_MAX)})")
 
-        log(f"Loaded {len(self.key_to_note)} key mappings from {self.config_file}", 0)
+        log(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
+            f"octave shift: {self.octave_shift:+d})", 0)
         log(f"Control keys: {self.control_keys}", 1)
 
-    def get_note_for_key(self, key_stroke):
-        """Get the actual note for a keystroke, or None if not mapped"""
-        note = self.key_to_note.get(key_stroke)
-        if note is None:
-            log(f"Key '{key_stroke}' is not mapped to any note.", 0)
-        return note
+    def note_for_key(self, key: str) -> int:
+        """MIDI note currently played by a mapped key (octave shift included)"""
+        return self.key_to_midi[key] + 12 * self.octave_shift
+
+    def _octave_shift_fits(self, shift: int) -> bool:
+        """True if the current layout, shifted by `shift` octaves, stays
+        within the playable range"""
+        notes = self.key_to_midi.values()
+        return min(notes) + 12 * shift >= MIDI_MIN and max(notes) + 12 * shift <= MIDI_MAX
+
+    def _shift_octave(self, delta: int):
+        """Shift the layout by `delta` octaves, unless notes would leave the
+        playable range. Held notes keep their pitch (see pressed_keys)."""
+        if not self._octave_shift_fits(self.octave_shift + delta):
+            log(f"Octave shift limit reached ({self.octave_shift:+d})", 1)
+            return
+        self.octave_shift += delta
+        log(f"Octave shift: {self.octave_shift:+d}", 1)
+
+    def _next_layout(self):
+        """Switch to the next available layout. Held notes keep playing
+        until their key is released (see pressed_keys)."""
+        names = list(self.keymaps)
+        self.layout = names[(names.index(self.layout) + 1) % len(names)]
+        self.key_to_midi = self.keymaps[self.layout]
+        log(f"Layout: {self.layout}", 1)
+        # A wide custom layout may not fit the current shift (every layout
+        # fits without shift: build_keymap checks the range)
+        if not self._octave_shift_fits(self.octave_shift):
+            log(f"Octave shift reset to +0: layout '{self.layout}' does not fit a "
+                f"{self.octave_shift:+d} shift", 1)
+            self.octave_shift = 0
 
     def set_callbacks(self,
                       on_note_on: Callable = None,
@@ -235,25 +280,32 @@ class KeyboardHandler:
             if self.on_instrument_next_callback:
                 self.on_instrument_next_callback()
             return
+        if key_char == self.control_keys['layout_next']:
+            self._next_layout()
+            return
+        if key_char == self.control_keys['octave_down']:
+            self._shift_octave(-1)
+            return
+        if key_char == self.control_keys['octave_up']:
+            self._shift_octave(+1)
+            return
 
-        actual_note = self.get_note_for_key(key_char)
-        if actual_note:
-            with self.key_lock:
-                if key_char not in self.pressed_keys:
-                    self.pressed_keys.add(key_char)
-                    if self.on_note_on_callback:
-                        self.on_note_on_callback(key_char, actual_note)
+        if key_char not in self.key_to_midi:
+            log(f"Key '{key_char}' is not mapped to any note.", 0)
+            return
+        midi = self.note_for_key(key_char)
+        with self.key_lock:
+            if key_char not in self.pressed_keys:
+                self.pressed_keys[key_char] = midi
+                if self.on_note_on_callback:
+                    self.on_note_on_callback(key_char, midi)
 
     def _handle_key_up(self, key_char: str):
         """Handle a key-up edge for a normalized key string"""
-        actual_note = self.key_to_note.get(key_char)
-        if not actual_note:
-            return
         with self.key_lock:
-            if key_char in self.pressed_keys:
-                self.pressed_keys.discard(key_char)
-                if self.on_note_off_callback:
-                    self.on_note_off_callback(key_char, actual_note)
+            midi = self.pressed_keys.pop(key_char, None)
+            if midi is not None and self.on_note_off_callback:
+                self.on_note_off_callback(key_char, midi)
 
     # ------------------------------------------------------------------
     # Kitty keyboard protocol backend
@@ -651,8 +703,8 @@ class KeyboardHandler:
     # Accessors
     # ------------------------------------------------------------------
 
-    def get_pressed_keys(self) -> Set[str]:
-        """Get currently pressed keys thread-safely"""
+    def get_pressed_keys(self) -> Dict[str, int]:
+        """Get currently pressed note keys and their notes thread-safely"""
         with self.key_lock:
             return self.pressed_keys.copy()
 
@@ -678,22 +730,13 @@ class KeyboardHandler:
 
     def get_all_keys(self):
         """Get all mapped keys"""
-        return list(self.key_to_note.keys())
-
-    def get_note_name(self, key):
-        """Get actual note name for a given key"""
-        return self.get_note_for_key(key)
+        return list(self.key_to_midi.keys())
 
     def print_mappings(self):
         """Print all key mappings"""
         log("\nKey Mappings:", 0)
-        for key, actual_note in self.key_to_note.items():
-            log(f"  {key:2} -> {actual_note}", 0)
-
-    def set_base_note(self, base_note):
-        """Change the base note"""
-        self.base_note = base_note
-        log(f"Base note changed to {base_note}", 1)
+        for key, midi in self.key_to_midi.items():
+            log(f"  {key:2} -> {midi_to_note(midi)}", 0)
 
 
 def test_keyboard():
@@ -704,11 +747,11 @@ def test_keyboard():
     try:
         handler = KeyboardHandler('config.ini')
 
-        def on_note_on(key, note_name):
-            log(f"♪ {key} -> {note_name}", 0)
+        def on_note_on(key, midi):
+            log(f"♪ {key} -> {midi_to_note(midi)}", 0)
 
-        def on_note_off(key, note_name):
-            log(f"♫ {key} -> {note_name} (off)", 0)
+        def on_note_off(key, midi):
+            log(f"♫ {key} -> {midi_to_note(midi)} (off)", 0)
 
         def on_quit():
             log("Quit callback triggered", 0)

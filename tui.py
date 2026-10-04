@@ -22,6 +22,7 @@ from rich.text import Text
 
 # Local imports
 from logger import set_log_sink, get_log_history, log_level_list
+from music import midi_to_note
 
 REFRESH_PERIOD = 0.1  # seconds between renders (~10 Hz)
 LOG_HISTORY = 100     # log lines kept in memory
@@ -67,12 +68,14 @@ class SynthTUI:
             ("xruns: ", "bold"), (f"{xruns}", "red" if xruns else "green"),
         )
 
-        capture = self.synth.keyboard_handler.capture_status
-        pressed = sorted(self.synth.keyboard_handler.get_pressed_keys())
-        notes = [self.synth.keyboard_handler.get_note_name(k) or '?' for k in pressed]
+        handler = self.synth.keyboard_handler
+        capture = handler.capture_status
+        notes = [midi_to_note(midi) for midi in sorted(handler.get_pressed_keys().values())]
         line2 = Text.assemble(
             ("volume: ", "bold"), f"{engine.get_volume() * 100:.0f}%   ",
             ("instrument: ", "bold"), (self.synth.current_instrument, "cyan"), "   ",
+            ("layout: ", "bold"), (handler.layout, "cyan"), "   ",
+            ("octave: ", "bold"), f"{handler.octave_shift:+d}   ",
             ("voices: ", "bold"), f"{voices}   ",
             ("keyboard: ", "bold"), (capture, "green" if capture.startswith('OK') else "bold red"), "   ",
             ("notes: ", "bold"), (" ".join(notes) if notes else "-", "magenta"),
@@ -89,12 +92,14 @@ class SynthTUI:
         handler = self.synth.keyboard_handler
 
         notes_table = Table.grid(padding=(0, 2))
-        items = list(handler.key_to_note.items())
+        # Sorted by pitch: custom layout files may list notes in any order
+        items = sorted(((key, handler.note_for_key(key)) for key in handler.key_to_midi),
+                       key=lambda item: item[1])
         columns = 6
         for row_start in range(0, len(items), columns):
             row = []
-            for key, note in items[row_start:row_start + columns]:
-                row.append(Text.assemble((key, "bold cyan"), " -> ", (note, "magenta")))
+            for key, midi in items[row_start:row_start + columns]:
+                row.append(Text.assemble((key, "bold cyan"), " -> ", (midi_to_note(midi), "magenta")))
             row += [""] * (columns - len(row))
             notes_table.add_row(*row)
 
@@ -103,6 +108,9 @@ class SynthTUI:
             (controls['volume_up'], "bold cyan"), "/", (controls['volume_down'], "bold cyan"),
             " volume   ",
             (controls['instrument_next'], "bold cyan"), " next instrument   ",
+            (controls['layout_next'], "bold cyan"), " next layout   ",
+            (controls['octave_down'], "bold cyan"), "/", (controls['octave_up'], "bold cyan"),
+            " octave down/up   ",
             (controls['record_start'], "bold cyan"), "/", (controls['record_stop'], "bold cyan"),
             " record start/stop   ",
             (controls['quit'], "bold cyan"), " quit",
@@ -123,7 +131,7 @@ class SynthTUI:
 
     def _render(self) -> Layout:
         """Build the full layout"""
-        key_count = len(self.synth.keyboard_handler.key_to_note)
+        key_count = len(self.synth.keyboard_handler.key_to_midi)
         keymap_height = (key_count + 5) // 6 + 4  # note rows + spacer + controls + borders
 
         layout = Layout()
