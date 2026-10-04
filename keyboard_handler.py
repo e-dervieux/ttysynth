@@ -23,6 +23,7 @@ deliver. Two backends are therefore used, picked automatically at startup:
 import codecs
 import configparser
 import ctypes
+import functools
 import os
 import re
 import select
@@ -78,16 +79,26 @@ _SHORTCUT_MODS = 2 | 4 | 8 | 16 | 32
 # shared by the main and alternate screens.
 _FOCUS_REPORTING_ON, _FOCUS_REPORTING_OFF = '\x1b[?1004h', '\x1b[?1004l'
 
-_carbon = None
+@functools.cache
+def _carbon() -> Optional[ctypes.CDLL]:
+    """macOS Carbon framework, loaded on first use only. None if it cannot
+    be loaded: logged once, Secure Keyboard Entry detection is then off
+    (a mere diagnostic, not worth stopping the synthesizer)."""
+    try:
+        return ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
+    except OSError as e:
+        log(f"Secure Keyboard Entry detection unavailable: {e}", 2)
+        return None
 
 
 def _secure_input_active() -> bool:
     """True if macOS Secure Keyboard Entry is currently active (it blocks
     global event taps while the enabling app - usually a terminal - is
     focused). Cheap enough to call from the TUI refresh loop."""
-    global _carbon
     if sys.platform != 'darwin':
         return False
+    carbon = _carbon()
+    return carbon is not None and bool(carbon.IsSecureEventInputEnabled())
     try:
         if _carbon is None:
             _carbon = ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
