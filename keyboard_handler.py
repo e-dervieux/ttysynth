@@ -21,7 +21,6 @@ deliver. Two backends are therefore used, picked automatically at startup:
 
 # Global imports
 import codecs
-import configparser
 import ctypes
 import functools
 import logging
@@ -34,12 +33,12 @@ import termios
 import threading
 import time
 import tty
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
 # Local imports
+from config import KeyboardConfig, load_config
 from errors import ConfigError, SynthError
-from keymap import build_all_keymaps, normalize_key
+from keymap import build_all_keymaps
 from music import MIDI_MAX, MIDI_MIN, midi_to_note
 
 log = logging.getLogger(__name__)
@@ -106,10 +105,16 @@ def _secure_input_active() -> bool:
 class KeyboardHandler:
     """Keyboard events and key mapping (notes and controls)"""
 
-    def __init__(self, config_file):
-        self.config_file = config_file
-        config = configparser.ConfigParser()
-        config.read(config_file)
+    def __init__(self, keyboard_config: KeyboardConfig, control_keys: dict, default_volume: float):
+        """
+        Args:
+            keyboard_config: [KEYBOARD] settings (see config.py)
+            control_keys: {control name: normalized key} ([CONTROLS] settings)
+            default_volume: initial volume (0.0 to 1.0)
+
+        Raises:
+            ConfigError: invalid layout, or octave shift out of range
+        """
         self.keymaps = {}      # {layout name: keymap}, available layouts in cycling order
         self.layout = None     # Name of the current layout
         self.key_to_midi = {}  # Keymap of the current layout: {normalized key: MIDI note}
@@ -123,7 +128,7 @@ class KeyboardHandler:
         # may depend on the modifiers held at that moment (Shift, Ctrl...).
         # Only ever accessed from the active backend's input thread.
         self._held: dict = {}
-        self.volume = config.getfloat('AUDIO', 'DEFAULT_VOLUME', fallback=0.5)
+        self.volume = default_volume
         self.volume_lock = threading.Lock()
         self.running = False
 
@@ -143,39 +148,15 @@ class KeyboardHandler:
         self.on_record_stop_callback: Optional[Callable] = None
         self.on_instrument_next_callback: Optional[Callable] = None
 
-        self.load_key_mapping()
-
-    def load_key_mapping(self):
-        """Load the control keys and the note layout from the configuration
-        file (raises ValueError on an invalid or conflicting mapping)"""
-        config = configparser.ConfigParser()
-        config.read(self.config_file)
-
-        controls = {
-            'volume_up': config.get('CONTROLS', 'VOLUME_UP', fallback='+'),
-            'volume_down': config.get('CONTROLS', 'VOLUME_DOWN', fallback='-'),
-            'quit': config.get('CONTROLS', 'QUIT', fallback='esc'),
-            'record_start': config.get('CONTROLS', 'RECORD_START', fallback='b'),
-            'record_stop': config.get('CONTROLS', 'RECORD_STOP', fallback='n'),
-            'instrument_next': config.get('CONTROLS', 'INSTRUMENT_NEXT', fallback='tab'),
-            'layout_next': config.get('CONTROLS', 'LAYOUT_NEXT', fallback='v'),
-            'octave_down': config.get('CONTROLS', 'OCTAVE_DOWN', fallback='('),
-            'octave_up': config.get('CONTROLS', 'OCTAVE_UP', fallback=')'),
-        }
-        self.control_keys = {action: normalize_key(key, f"control {action}")
-                             for action, key in controls.items()}
-
-        self.layout = config.get('KEYBOARD', 'LAYOUT', fallback='qwerty')
-        # The custom layout path is relative to the configuration file
-        custom_file = Path(self.config_file).parent / config.get(
-            'KEYBOARD', 'CUSTOM_LAYOUT', fallback='custom_layout.ini')
-        self.keymaps = build_all_keymaps(self.layout, custom_file, self.control_keys)
+        self.control_keys = control_keys
+        self.layout = keyboard_config.layout
+        self.keymaps = build_all_keymaps(self.layout, keyboard_config.custom_layout, control_keys)
         self.key_to_midi = self.keymaps[self.layout]
-        self.octave_shift = config.getint('KEYBOARD', 'OCTAVE_SHIFT', fallback=0)
+        self.octave_shift = keyboard_config.octave_shift
         if not self._octave_shift_fits(self.octave_shift):
-            raise ConfigError(f"OCTAVE_SHIFT = {self.octave_shift} puts notes of layout '{self.layout}' "
-                              f"outside the playable range ({midi_to_note(MIDI_MIN)} to "
-                              f"{midi_to_note(MIDI_MAX)})")
+            raise ConfigError(f"[KEYBOARD] OCTAVE_SHIFT = {self.octave_shift} puts notes of layout "
+                              f"'{self.layout}' outside the playable range "
+                              f"({midi_to_note(MIDI_MIN)} to {midi_to_note(MIDI_MAX)})")
 
         log.debug(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
                   f"octave shift: {self.octave_shift:+d})")
@@ -747,7 +728,8 @@ def test_keyboard():
     log.info("Press keys (quit key from config to stop)")
 
     try:
-        handler = KeyboardHandler('config.ini')
+        config = load_config()
+        handler = KeyboardHandler(config.keyboard, config.controls, config.audio.default_volume)
 
         def on_note_on(key, midi):
             log.debug(f"♪ {key} -> {midi_to_note(midi)}")

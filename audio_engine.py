@@ -22,7 +22,6 @@ shipping rendered audio through queues.
 """
 
 # Global imports
-import configparser
 import logging
 import logging.handlers
 import multiprocessing as mp
@@ -38,6 +37,7 @@ import sounddevice as sd
 
 # Local imports
 from classes import Note, Flute, INSTRUMENTS
+from config import AudioConfig
 from errors import SynthError
 
 log = logging.getLogger(__name__)
@@ -292,28 +292,19 @@ class AudioEngine:
     communicates with it through command/status queues.
     """
 
-    def __init__(self, config_file='config.ini', sample_rate=None, buffer_size=None, channels=None):
+    def __init__(self, audio_config: AudioConfig):
         """
         Initialize audio engine
 
         Args:
-            config_file: Path to configuration file
-            sample_rate: Audio sample rate in Hz (overrides config)
-            buffer_size: Audio buffer size in samples (overrides config)
-            channels: Number of audio channels (overrides config)
+            audio_config: [AUDIO] settings (see config.py)
         """
-        # Load configuration
-        config = configparser.ConfigParser()
-        config.read(config_file)
-
-        # Use provided parameters or load from config
-        self.sample_rate = sample_rate or config.getint('AUDIO', 'SAMPLE_RATE', fallback=48000)
-        self.buffer_size = buffer_size or config.getint('AUDIO', 'BUFFER_SIZE', fallback=128)
-        self.channels = channels or config.getint('AUDIO', 'CHANNELS', fallback=2)
+        self.sample_rate = audio_config.sample_rate
+        self.buffer_size = audio_config.buffer_size
+        self.channels = audio_config.channels
         self.buffer_duration = self.buffer_size / self.sample_rate
 
-        # Load default volume from config
-        self.default_volume = config.getfloat('AUDIO', 'DEFAULT_VOLUME', fallback=0.5)
+        self.default_volume = audio_config.default_volume
         self.volume = self.default_volume
 
         # Multiprocessing communication

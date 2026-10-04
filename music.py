@@ -7,7 +7,6 @@ display or to a frequency for synthesis.
 """
 
 # Global imports
-import configparser
 import logging
 import re
 
@@ -57,18 +56,14 @@ def midi_to_note(midi: int) -> str:
 class MusicEngine:
     """Handles pure musical calculations - notes to frequencies"""
 
-    def __init__(self, config_file='config.ini'):
+    def __init__(self, tuning_freq: float):
         """
         Initialize music engine
 
         Args:
-            config_file: Path to configuration file
+            tuning_freq: frequency of A4 in Hz
         """
-        # Load configuration
-        config = configparser.ConfigParser()
-        config.read(config_file)
-
-        self.tuning_freq = config.getfloat('AUDIO', 'TUNING_FREQ', fallback=440.0)
+        self.tuning_freq = tuning_freq
 
     def midi_to_frequency(self, midi: int) -> float:
         """

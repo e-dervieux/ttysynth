@@ -11,6 +11,7 @@ import time
 from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler, test_keyboard
 from audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
+from config import load_config
 from logging_setup import setup_logging
 
 def test_music_engine():
@@ -20,7 +21,7 @@ def test_music_engine():
     print("=" * 50)
     
     try:
-        music = MusicEngine(config_file='config.ini')
+        music = MusicEngine(load_config().audio.tuning_freq)
         
         print("\n✅ Music engine loaded successfully")
         
@@ -57,7 +58,8 @@ def test_keyboard_handler():
     
     try:
         print("🎹 Testing keyboard handler initialization...")
-        keyboard = KeyboardHandler('config.ini')
+        config = load_config()
+        keyboard = KeyboardHandler(config.keyboard, config.controls, config.audio.default_volume)
         valid_keys = keyboard.get_all_keys()
         
         print("✅ Keyboard handler created successfully")
@@ -116,7 +118,7 @@ def test_audio_engine():
     
     try:
         print("🔊 Creating audio engine...")
-        audio = AudioEngine('config.ini')
+        audio = AudioEngine(load_config().audio)
         
         print("✅ Audio engine created successfully")
         
@@ -187,9 +189,10 @@ def test_full_integration():
         # This would import and test the full synthesizer
         # But we'll do a simpler integration test here
         
-        music = MusicEngine()
-        keyboard = KeyboardHandler('config.ini')
-        audio = AudioEngine('config.ini')
+        config = load_config()
+        music = MusicEngine(config.audio.tuning_freq)
+        keyboard = KeyboardHandler(config.keyboard, config.controls, config.audio.default_volume)
+        audio = AudioEngine(config.audio)
         
         print("✅ All components initialized")
         

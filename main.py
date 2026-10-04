@@ -14,6 +14,7 @@ import threading
 import time
 
 # Local imports
+from config import Config, load_config
 from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine
@@ -28,16 +29,17 @@ log = logging.getLogger(__name__)
 class Synthesizer:
     """Main synthesizer class that coordinates all components"""
 
-    def __init__(self, config_file='config.ini'):
-        """Initialize the synthesizer"""
+    def __init__(self, config: Config):
+        """Initialize the synthesizer (raises ConfigError on an invalid
+        keyboard configuration)"""
         self.running = False
         self._stopped = False
         self._thread_error = None  # First exception of a crashed background thread
 
-        # Initialize components with config file
-        self.music_engine = MusicEngine(config_file=config_file)
-        self.keyboard_handler = KeyboardHandler(config_file=config_file)
-        self.audio_engine = AudioEngine(config_file=config_file)
+        self.music_engine = MusicEngine(config.audio.tuning_freq)
+        self.keyboard_handler = KeyboardHandler(config.keyboard, config.controls,
+                                                config.audio.default_volume)
+        self.audio_engine = AudioEngine(config.audio)
 
         # Instrument selection (cycled with the instrument-next control key)
         self.instrument_names = list(INSTRUMENTS.keys())
@@ -177,7 +179,7 @@ def main() -> int:
     log.info("=====================================")
 
     try:
-        Synthesizer().run()
+        Synthesizer(load_config()).run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):
         # a message is enough. Other exceptions are bugs: keep the traceback.
