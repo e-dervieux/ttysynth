@@ -61,6 +61,7 @@ class SynthTUI:
     def _render_status(self) -> Panel:
         """Top status bar: stream parameters and live audio process status"""
         engine = self.synth.audio_engine
+        music = self.synth.music_engine
         status = engine.get_status()
 
         buffer_ms = engine.buffer_duration * 1000.0
@@ -73,7 +74,8 @@ class SynthTUI:
             ("fs: ", "bold"), f"{engine.sample_rate} Hz   ",
             ("buffer: ", "bold"), f"{engine.buffer_size} ({buffer_ms:.1f} ms)   ",
             ("latency: ", "bold"), f"{latency_str}   ",
-            ("xruns: ", "bold"), (f"{xruns}", "red" if xruns else "green"),
+            ("xruns: ", "bold"), (f"{xruns}", "red" if xruns else "green"), "   ",
+            ("tuning: ", "bold"), f"A4 = {music.tuning_freq:g} Hz, ", (music.temperament, "cyan"),
         )
 
         handler = self.synth.keyboard_handler

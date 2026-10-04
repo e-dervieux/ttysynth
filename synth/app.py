@@ -39,7 +39,7 @@ class Synthesizer:
         self._stopped = False
         self._thread_error = None  # First exception of a crashed background thread
 
-        self.music_engine = MusicEngine(config.audio.tuning_freq)
+        self.music_engine = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
         self.audio_engine = AudioEngine(config.audio)
         self.keyboard_handler = KeyboardHandler(config.keyboard, config.controls,
                                                 on_note=self.on_note, on_control=self.on_control)
@@ -54,6 +54,7 @@ class Synthesizer:
             'volume_down': lambda: self.audio_engine.change_volume(-VOLUME_STEP),
             'instrument_next': self.next_instrument,
             'layout_next': self.keyboard_handler.next_layout,
+            'temperament_next': self.music_engine.next_temperament,
             'octave_down': lambda: self.keyboard_handler.shift_octave(-1),
             'octave_up': lambda: self.keyboard_handler.shift_octave(+1),
             'record_start': self.on_record_start,

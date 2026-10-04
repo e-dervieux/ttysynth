@@ -22,7 +22,8 @@ def test_music_engine():
     print("=" * 50)
     
     try:
-        music = MusicEngine(load_config().audio.tuning_freq)
+        audio_config = load_config().audio
+        music = MusicEngine(audio_config.tuning_freq, audio_config.temperament)
         
         print("\n✅ Music engine loaded successfully")
         
@@ -208,7 +209,7 @@ def test_full_integration():
         # But we'll do a simpler integration test here
         
         config = load_config()
-        music = MusicEngine(config.audio.tuning_freq)
+        music = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
         audio = AudioEngine(config.audio)
 
         def on_note(key, midi, pressed):

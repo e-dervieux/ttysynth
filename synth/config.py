@@ -16,6 +16,7 @@ from pathlib import Path
 # Local imports
 from synth.errors import ConfigError
 from synth.keymap import LAYOUT_NAMES, normalize_key
+from synth.music import TEMPERAMENTS
 
 # Default configuration file, at the project root (not relative to the current
 # directory, so that the synthesizer can be started from anywhere)
@@ -28,6 +29,7 @@ CONTROLS = {
     'volume_down': 'volume down',
     'instrument_next': 'next instrument',
     'layout_next': 'next layout',
+    'temperament_next': 'next temperament',
     'octave_down': 'octave down',
     'octave_up': 'octave up',
     'record_start': 'record start',
@@ -37,7 +39,8 @@ CONTROLS = {
 
 # Expected options of each section (configparser lowercases option names)
 _SCHEMA = {
-    'AUDIO': ('sample_rate', 'buffer_size', 'channels', 'default_volume', 'tuning_freq'),
+    'AUDIO': ('sample_rate', 'buffer_size', 'channels', 'default_volume', 'tuning_freq',
+              'temperament'),
     'KEYBOARD': ('layout', 'custom_layout', 'octave_shift'),
     'CONTROLS': tuple(CONTROLS),
 }
@@ -51,6 +54,7 @@ class AudioConfig:
     channels: int
     default_volume: float  # 0.0 to 1.0
     tuning_freq: float     # Hz, frequency of A4
+    temperament: str       # One of music.TEMPERAMENTS
 
 
 @dataclass(frozen=True)
@@ -138,6 +142,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         default_volume=_get(parser, 'AUDIO', 'default_volume', float, lambda v: 0 <= v <= 1,
                             'a number between 0 and 1'),
         tuning_freq=_get(parser, 'AUDIO', 'tuning_freq', float, _positive, 'a positive number'),
+        temperament=_get(parser, 'AUDIO', 'temperament', valid=lambda v: v in TEMPERAMENTS,
+                         expected=f"one of {', '.join(TEMPERAMENTS)}"),
     )
 
     keyboard = KeyboardConfig(

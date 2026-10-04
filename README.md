@@ -11,6 +11,9 @@ with an htop-like full-screen terminal interface.
   - **Flute**: additive synthesis (sine + harmonics) with a soft ADSR envelope
   - **Pluck**: harp / classical guitar-like sound using the dirt-cheap 80s
     [Karplus-Strong algorithm](https://en.wikipedia.org/wiki/Karplus%E2%80%93Strong_string_synthesis)
+- Four temperaments, switchable live: equal (modern), Pythagorean,
+  quarter-comma meantone and Werckmeister I (III) "correct temperament"
+  (see `synth/music.py` for how each distributes the Pythagorean comma)
 - Full-screen TUI (alternate screen buffer, like htop) showing sample rate,
   buffer size, measured latency, xrun count, volume, active notes and a
   scrolling log panel
@@ -99,6 +102,7 @@ when you quit.
 - `+` / `-`: volume up / down
 - `tab`: switch instrument (flute / pluck)
 - `v`: switch layout (azerty / qwerty / custom)
+- `c`: switch temperament (equal / pythagorean / meantone / werckmeister)
 - `(` / `)`: octave down / up
 - `b` / `n`: start / stop recording (not implemented yet)
 - `esc`: quit
@@ -106,7 +110,7 @@ when you quit.
 ### Configuration
 
 Edit `config.ini` to change the sample rate, buffer size, tuning frequency
-(A4), initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
+(A4), temperament, initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
 shift and control keys.
 
 With `LAYOUT = custom`, notes are mapped to keys in `custom_layout.ini`:

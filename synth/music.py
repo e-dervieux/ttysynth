@@ -4,10 +4,48 @@ Musical aspects module - handles note names, MIDI numbers, frequencies
 Notes are identified by their MIDI number (C4 = 60, A4 = 69): integers make
 transposition and comparison trivial, and are converted to a name for
 display or to a frequency for synthesis.
+
+Temperaments
+------------
+Twelve pure fifths (frequency ratio 3/2) overshoot seven octaves by the
+Pythagorean comma (about 23.46 cents): the circle of fifths cannot close
+with pure fifths only. A temperament is a choice of how to spread that comma
+over the 12 fifths, trading the purity of some intervals for others:
+
+- Equal (modern): every fifth narrowed by 1/12 comma (exactly 700 cents).
+  All keys sound the same; only octaves are pure.
+- Pythagorean: 11 pure fifths, the 12th (G#-Eb) takes the whole comma (the
+  "wolf" fifth, unusable). Pure fifths and fourths, wide major thirds
+  (408 cents instead of 386 for a pure 5/4).
+- Quarter-comma meantone (described by Pietro Aron, 1523): 11 fifths
+  narrowed by 1/4 syntonic comma, so that four of them stacked make a pure
+  major third (5/4). Sweet thirds in common keys, wolf G#-Eb.
+- Werckmeister I (III), "correct temperament" (Andreas Werckmeister, 1691):
+  the fifths C-G, G-D, D-A and B-F# narrowed by 1/4 Pythagorean comma, the
+  other 8 pure. No wolf: every key is usable, each with its own colour.
+  Werckmeister numbered it I among his "correct temperaments"; it is also
+  known as III, the monochord numbering where just intonation is I and
+  quarter-comma meantone II.
+
+Each temperament is defined here by the sizes of its fifths, from which the
+note offsets are computed. The historical temperaments are built on C, and
+A4 stays at the tuning frequency in all of them (as when tuning a harpsichord
+from an A).
+
+References:
+- Pythagorean comma: https://en.wikipedia.org/wiki/Pythagorean_comma
+- Syntonic comma: https://en.wikipedia.org/wiki/Syntonic_comma
+- Equal temperament: https://en.wikipedia.org/wiki/12_equal_temperament
+- Pythagorean tuning: https://en.wikipedia.org/wiki/Pythagorean_tuning
+- Quarter-comma meantone: https://en.wikipedia.org/wiki/Quarter-comma_meantone
+- Werckmeister temperaments: https://en.wikipedia.org/wiki/Werckmeister_temperament
+  (A. Werckmeister, Musicalische Temperatur, 1691; Orgel-Probe, 1681)
+- J. M. Barbour, Tuning and Temperament: A Historical Survey, 1951
 """
 
 # Global imports
 import logging
+import math
 import re
 
 log = logging.getLogger(__name__)
@@ -28,6 +66,44 @@ _A4_MIDI = 69
 
 # Playable range: the MIDI range, C-1 (8 Hz) to G9 (12.5 kHz at A4 = 440 Hz)
 MIDI_MIN, MIDI_MAX = 0, 127
+
+# Interval sizes in cents (1200 cents = one octave)
+_PURE_FIFTH = 1200 * math.log2(3 / 2)                     # 701.955
+_PYTHAGOREAN_COMMA = 1200 * math.log2(3 ** 12 / 2 ** 19)  # 23.460: 12 pure fifths - 7 octaves
+_SYNTONIC_COMMA = 1200 * math.log2(81 / 80)               # 21.506: 4 pure fifths - 2 octaves - pure third
+
+
+def _offsets_from_fifths(fifths: list) -> tuple:
+    """
+    Note offsets of a temperament, in cents from C (index 0 = C ... 11 = B),
+    from the sizes of the 11 fifths of the chain Eb-Bb-F-C-G-D-A-E-B-F#-C#-G#.
+    The 12th fifth, G#-Eb, closes the circle with what remains.
+    """
+    pitch_class = 3  # Eb
+    cents = {pitch_class: 0.0}
+    for fifth in fifths:
+        next_pitch_class = (pitch_class + 7) % 12
+        cents[next_pitch_class] = cents[pitch_class] + fifth
+        pitch_class = next_pitch_class
+    return tuple((cents[i] - cents[0]) % 1200 for i in range(12))
+
+
+_TEMPERED = _PURE_FIFTH - _PYTHAGOREAN_COMMA / 4  # Werckmeister's narrowed fifth
+
+# {name: note offsets in cents from C}, see the module docstring. Order
+# matters: the temperament-next control key cycles through this dict.
+# TODO: TEMPERAMENT_ROOT option, to build the historical temperaments on
+#       another key than C (a rotation of the offsets)
+TEMPERAMENTS = {
+    # 700 cents: the pure fifth narrowed by 1/12 Pythagorean comma
+    'equal': _offsets_from_fifths([700.0] * 11),
+    'pythagorean': _offsets_from_fifths([_PURE_FIFTH] * 11),
+    'meantone': _offsets_from_fifths([_PURE_FIFTH - _SYNTONIC_COMMA / 4] * 11),
+    # Fifths Eb-Bb, Bb-F, F-C pure; C-G, G-D, D-A narrowed; A-E, E-B pure;
+    # B-F# narrowed; F#-C#, C#-G# (and G#-Eb) pure
+    'werckmeister': _offsets_from_fifths([_PURE_FIFTH] * 3 + [_TEMPERED] * 3 + [_PURE_FIFTH] * 2
+                                         + [_TEMPERED] + [_PURE_FIFTH] * 2),
+}
 
 
 def note_to_midi(note_name: str) -> int:
@@ -56,22 +132,38 @@ def midi_to_note(midi: int) -> str:
 class MusicEngine:
     """Handles pure musical calculations - notes to frequencies"""
 
-    def __init__(self, tuning_freq: float):
+    def __init__(self, tuning_freq: float, temperament: str):
         """
         Initialize music engine
 
         Args:
             tuning_freq: frequency of A4 in Hz
+            temperament: one of TEMPERAMENTS
         """
         self.tuning_freq = tuning_freq
+        self.temperament = temperament
+
+    @staticmethod
+    def _cents(midi: int, offsets: tuple) -> float:
+        """Pitch of a MIDI note in cents from C-1, in a temperament"""
+        octave, pitch_class = divmod(midi, 12)
+        return 1200 * octave + offsets[pitch_class]
 
     def midi_to_frequency(self, midi: int) -> float:
         """
-        Frequency in Hz of a MIDI note, in 12-tone equal temperament
-        (other temperaments might be added in the future):
-        f = f_A4 * 2^((midi - 69) / 12)
+        Frequency in Hz of a MIDI note in the current temperament, A4 being
+        the reference: f = f_A4 * 2^((cents(note) - cents(A4)) / 1200)
         """
-        return self.tuning_freq * 2 ** ((midi - _A4_MIDI) / 12)
+        offsets = TEMPERAMENTS[self.temperament]
+        cents = self._cents(midi, offsets) - self._cents(_A4_MIDI, offsets)
+        return self.tuning_freq * 2 ** (cents / 1200)
+
+    def next_temperament(self):
+        """Switch to the next temperament (notes already playing keep their
+        frequency)"""
+        names = list(TEMPERAMENTS)
+        self.temperament = names[(names.index(self.temperament) + 1) % len(names)]
+        log.info(f"Temperament: {self.temperament}")
 
     def note_to_frequency(self, note_name: str) -> float:
         """Frequency in Hz of a note name (e.g., 'C4', 'F#5', 'Bb3')"""
