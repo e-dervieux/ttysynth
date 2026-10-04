@@ -91,15 +91,16 @@ class Note:
 
         return np.zeros_like(phase_progress)
 
-    def _transition_to_next_phase(self):
-        """Transition to the next phase"""
+    def _transition_to_next_phase(self, sample: int):
+        """Transition to the next phase, starting at `sample` (which may lie
+        inside the current buffer, not only at its start)"""
         if self.phase == Phase.ATTACK:
             self.phase = Phase.DECAY
-            self.phase_start_sample = self.t_int
+            self.phase_start_sample = sample
 
         elif self.phase == Phase.DECAY:
             self.phase = Phase.SUSTAIN
-            self.phase_start_sample = self.t_int
+            self.phase_start_sample = sample
 
         elif self.phase == Phase.RELEASE:
             self.ended = True
@@ -165,7 +166,7 @@ class Note:
 
             # Check if we need to transition to next phase
             if samples_to_process >= samples_remaining_in_phase and self.phase != Phase.SUSTAIN:
-                self._transition_to_next_phase()
+                self._transition_to_next_phase(self.t_int + samples_processed)
 
         # Apply envelope window and volume
         audio_buffer = audio_buffer * envelope_window * self.volume
