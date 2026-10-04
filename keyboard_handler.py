@@ -26,6 +26,7 @@ import ctypes
 import os
 import re
 import select
+import signal
 import sys
 import termios
 import threading
@@ -61,6 +62,18 @@ _FUNCTIONAL_KEY_FLOOR = 0xE000
 # Kitty key event types
 _EVENT_PRESS, _EVENT_REPEAT, _EVENT_RELEASE = 1, 2, 3
 
+# Kitty modifier bits (the modifiers field is sent as 1 + bitmask):
+# shift 1, alt 2, ctrl 4, super 8, hyper 16, meta 32, caps lock 64, num lock 128
+_MOD_CTRL = 4
+# Modifiers turning a key press into a shortcut (no note played). Shift is
+# excluded (needed for '+' on many layouts), as are the lock bits.
+_SHORTCUT_MODS = 2 | 4 | 8 | 16 | 32
+
+# Focus reporting (DEC private mode 1004): the terminal sends CSI I / CSI O
+# when its window gains / loses focus. Unlike the kitty flags, this mode is
+# shared by the main and alternate screens.
+_FOCUS_REPORTING_ON, _FOCUS_REPORTING_OFF = '\x1b[?1004h', '\x1b[?1004l'
+
 _carbon = None
 
 
@@ -91,6 +104,11 @@ class KeyboardHandler:
         self.key_to_note = {}
         self.pressed_keys: Set[str] = set()
         self.key_lock = threading.Lock()
+        # Physical key id -> key name resolved at press time. Releases are
+        # looked up here rather than resolved again, as the resolved name
+        # may depend on the modifiers held at that moment (Shift, Ctrl...).
+        # Only ever accessed from the active backend's input thread.
+        self._held: dict = {}
         self.volume = config.getfloat('AUDIO', 'DEFAULT_VOLUME', fallback=0.5)
         self.volume_lock = threading.Lock()
         self.running = False
@@ -164,6 +182,24 @@ class KeyboardHandler:
     # ------------------------------------------------------------------
     # Key event dispatch (shared by both backends)
     # ------------------------------------------------------------------
+
+    def _key_down(self, key_id, key_name: str):
+        """Press edge of a physical key (auto-repeats are ignored)"""
+        if key_id in self._held:
+            return
+        self._held[key_id] = key_name
+        self._handle_key_down(key_name)
+
+    def _key_up(self, key_id):
+        """Release edge of a physical key, dispatched under its press name"""
+        key_name = self._held.pop(key_id, None)
+        if key_name is not None:
+            self._handle_key_up(key_name)
+
+    def _release_all(self):
+        """Release every held key (their release events will never come)"""
+        for key_id in list(self._held):
+            self._key_up(key_id)
 
     def _handle_key_down(self, key_char: str):
         """Handle a key-down edge for a normalized key string"""
@@ -306,12 +342,17 @@ class KeyboardHandler:
         except (ValueError, IndexError):
             return
 
+        modifiers = 0
         event = _EVENT_PRESS
-        if len(fields) > 1 and ':' in fields[1]:
-            try:
-                event = int(fields[1].split(':')[1])
-            except (ValueError, IndexError):
-                pass
+        if len(fields) > 1:
+            mods, _, event_type = fields[1].partition(':')
+            if mods:
+                modifiers = int(mods) - 1
+            if event_type:
+                try:
+                    event = int(event_type)
+                except ValueError:
+                    pass
 
         text = ''
         if len(fields) > 2 and fields[2]:
@@ -320,15 +361,28 @@ class KeyboardHandler:
             except (ValueError, OverflowError):
                 text = ''
 
-        key_char = self._key_from_code(keycode, text)
-        if key_char is None:
+        # The keycode is the unshifted key of the current layout, identical
+        # for press and release: it is the key's physical identity.
+        if event == _EVENT_RELEASE:
+            # Never filtered on modifiers: pressing one while a note is held
+            # must not leave that note stuck.
+            self._key_up(keycode)
+            return
+        if event != _EVENT_PRESS:
+            return  # _EVENT_REPEAT: the note is already held
+
+        if modifiers & _MOD_CTRL and keycode == ord('c'):
+            # The protocol sends Ctrl+C as an escape code instead of letting
+            # the tty raise SIGINT: raise it ourselves so both backends share
+            # the same interrupt path.
+            signal.raise_signal(signal.SIGINT)
+            return
+        if modifiers & _SHORTCUT_MODS:
             return
 
-        if event == _EVENT_PRESS:
-            self._handle_key_down(key_char)
-        elif event == _EVENT_RELEASE:
-            self._handle_key_up(key_char)
-        # _EVENT_REPEAT is ignored: the note is already held
+        key_char = self._key_from_code(keycode, text)
+        if key_char is not None:
+            self._key_down(keycode, key_char)
 
     def _consume_input(self, buf: str) -> str:
         """Consume parseable input from buf, return the unparsed remainder"""
@@ -351,7 +405,11 @@ class KeyboardHandler:
                 prefix, params, final = match.groups()
                 if final == 'u' and not prefix:
                     self._dispatch_kitty_event(params)
-                # Other sequences (query replies, etc.) are dropped
+                elif final == 'O' and not prefix and not params:
+                    # Focus lost: keys released in another window never
+                    # report here, release them now to avoid stuck notes
+                    self._release_all()
+                # Other sequences (focus in, query replies...) are dropped
                 buf = buf[match.end():]
                 continue
 
@@ -393,6 +451,14 @@ class KeyboardHandler:
     # pynput fallback backend
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _pynput_key_id(key):
+        """Physical identity of a pynput key: the virtual key code of
+        character keys (does not depend on modifiers, unlike key.char),
+        or the Key member itself for special keys"""
+        vk = getattr(key, 'vk', None)
+        return key if vk is None else vk
+
     def _pynput_key_char(self, key, pk) -> Optional[str]:
         """Extract a normalized key string from a pynput key object"""
         if hasattr(key, 'char') and key.char is not None:
@@ -413,19 +479,30 @@ class KeyboardHandler:
                 "kitty keyboard protocol (iTerm2 3.5+, kitty, WezTerm, ...).", 3)
             return False
 
+        # pynput does not report modifiers with key events: track the ones
+        # turning a press into a shortcut (no note played), as the kitty
+        # backend does. Shift is excluded (needed for '+' on many layouts),
+        # and so is AltGr (used to type characters).
+        shortcut_mods = {pk.Key.ctrl, pk.Key.ctrl_l, pk.Key.ctrl_r,
+                         pk.Key.alt, pk.Key.alt_l, pk.Key.alt_r,
+                         pk.Key.cmd, pk.Key.cmd_l, pk.Key.cmd_r}
+        held_mods = set()
+
         def on_press(key):
             try:
-                key_char = self._pynput_key_char(key, pk)
-                if key_char:
-                    self._handle_key_down(key_char)
+                if key in shortcut_mods:
+                    held_mods.add(key)
+                elif not held_mods:
+                    key_char = self._pynput_key_char(key, pk)
+                    if key_char:
+                        self._key_down(self._pynput_key_id(key), key_char)
             except Exception as e:
                 log(f"Error in key press handler ({key}): {e}", 3)
 
         def on_release(key):
             try:
-                key_char = self._pynput_key_char(key, pk)
-                if key_char:
-                    self._handle_key_up(key_char)
+                held_mods.discard(key)
+                self._key_up(self._pynput_key_id(key))
             except Exception as e:
                 log(f"Error in key release handler ({key}): {e}", 3)
 
@@ -493,6 +570,7 @@ class KeyboardHandler:
         if self._detect_kitty_protocol():
             self.backend = 'kitty'
             self._push_kitty_flags()
+            self._write_term(_FOCUS_REPORTING_ON)
             self._reader_thread = threading.Thread(
                 target=self._kitty_read_loop, name='kitty-keys', daemon=True)
             self._reader_thread.start()
@@ -506,6 +584,7 @@ class KeyboardHandler:
         self.running = False
 
         if self.backend == 'kitty':
+            self._write_term(_FOCUS_REPORTING_OFF)
             self._pop_kitty_flags()
 
         if self._reader_thread is not None:
@@ -521,7 +600,9 @@ class KeyboardHandler:
         log("Keyboard monitoring stopped", 0)
 
     def _enter_cbreak(self):
-        """cbreak: char-at-a-time input, no echo, Ctrl+C still raises SIGINT"""
+        """cbreak: char-at-a-time input, no echo. The tty still raises SIGINT
+        on a raw Ctrl+C byte; the kitty protocol encodes Ctrl+C as an escape
+        code instead, handled in _dispatch_kitty_event."""
         try:
             fd = sys.stdin.fileno()
             self._saved_term_attrs = termios.tcgetattr(fd)
