@@ -21,15 +21,25 @@ from keymap import LAYOUT_NAMES, normalize_key
 # directory, so that the synthesizer can be started from anywhere)
 DEFAULT_CONFIG_PATH = Path(__file__).parent / 'config.ini'
 
-# Control actions, as named in the [CONTROLS] section (lowercase here)
-CONTROL_NAMES = ('volume_up', 'volume_down', 'quit', 'record_start', 'record_stop',
-                 'instrument_next', 'layout_next', 'octave_down', 'octave_up')
+# Controls: {name, as in the [CONTROLS] section (lowercase here): label}.
+# The TUI lists them in this order; Synthesizer maps each name to its action.
+CONTROLS = {
+    'volume_up': 'volume up',
+    'volume_down': 'volume down',
+    'instrument_next': 'next instrument',
+    'layout_next': 'next layout',
+    'octave_down': 'octave down',
+    'octave_up': 'octave up',
+    'record_start': 'record start',
+    'record_stop': 'record stop',
+    'quit': 'quit',
+}
 
 # Expected options of each section (configparser lowercases option names)
 _SCHEMA = {
     'AUDIO': ('sample_rate', 'buffer_size', 'channels', 'default_volume', 'tuning_freq'),
     'KEYBOARD': ('layout', 'custom_layout', 'octave_shift'),
-    'CONTROLS': CONTROL_NAMES,
+    'CONTROLS': tuple(CONTROLS),
 }
 
 
@@ -56,7 +66,7 @@ class Config:
     """Whole configuration"""
     audio: AudioConfig
     keyboard: KeyboardConfig
-    controls: dict         # {control name: normalized key}, see CONTROL_NAMES
+    controls: dict         # {control name: normalized key}, see CONTROLS
 
 
 def _where(section: str, option: str) -> str:
@@ -140,6 +150,6 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     )
 
     controls = {name: normalize_key(parser['CONTROLS'][name], _where('CONTROLS', name))
-                for name in CONTROL_NAMES}
+                for name in CONTROLS}
 
     return Config(audio=audio, keyboard=keyboard, controls=controls)

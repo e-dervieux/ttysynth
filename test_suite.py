@@ -5,11 +5,12 @@ Comprehensive test suite for the synthesizer components
 # Global imports
 import logging
 import sys
+import threading
 import time
 
 # Local imports
 from music import MusicEngine, midi_to_note
-from keyboard_handler import KeyboardHandler, test_keyboard
+from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine, test_basic_audio, test_streaming_audio
 from config import load_config
 from logging_setup import setup_logging
@@ -50,6 +51,31 @@ def test_music_engine():
         print(f"❌ Music engine test failed: {e}")
         return False
 
+def test_keyboard():
+    """Interactive keyboard test: logs note and control keys until quit"""
+    config = load_config()
+    done = threading.Event()
+
+    def on_note(key, midi, pressed):
+        print(f"{'♪' if pressed else '♫'} {key} -> {midi_to_note(midi)}{'' if pressed else ' (off)'}")
+
+    def on_control(name):
+        print(f"Control: {name}")
+        if name == 'quit':
+            done.set()
+
+    handler = KeyboardHandler(config.keyboard, config.controls, on_note, on_control)
+    handler.start()
+    try:
+        while not done.wait(0.1):
+            pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        handler.stop()
+    return True
+
+
 def test_keyboard_handler():
     """Test 2: Keyboard Handler Test"""
     print("=" * 50)
@@ -59,19 +85,11 @@ def test_keyboard_handler():
     try:
         print("🎹 Testing keyboard handler initialization...")
         config = load_config()
-        keyboard = KeyboardHandler(config.keyboard, config.controls, config.audio.default_volume)
-        valid_keys = keyboard.get_all_keys()
+        keyboard = KeyboardHandler(config.keyboard, config.controls,
+                                   on_note=lambda *args: None, on_control=lambda name: None)
         
         print("✅ Keyboard handler created successfully")
-        print(f"📝 Monitoring {len(valid_keys)} keys")
-        
-        # Test volume control
-        print("\n🔊 Testing volume control:")
-        keyboard.set_volume(0.3)
-        print(f"  Set volume to 30%: {keyboard.get_volume()*100:.0f}%")
-        
-        keyboard.set_volume(0.8)
-        print(f"  Set volume to 80%: {keyboard.get_volume()*100:.0f}%")
+        print(f"📝 Monitoring {len(keyboard.key_to_midi)} keys")
         
         # Interactive test
         print("\n🔍 Interactive keyboard test available")
@@ -191,24 +209,21 @@ def test_full_integration():
         
         config = load_config()
         music = MusicEngine(config.audio.tuning_freq)
-        keyboard = KeyboardHandler(config.keyboard, config.controls, config.audio.default_volume)
         audio = AudioEngine(config.audio)
+
+        def on_note(key, midi, pressed):
+            if pressed:
+                freq = music.midi_to_frequency(midi)
+                audio.play_note(key, freq)
+                print(f"♪ {key} -> {midi_to_note(midi)} ({freq:.1f} Hz)")
+            else:
+                audio.stop_note(key)
+                print(f"♫ {key} -> {midi_to_note(midi)} (off)")
+
+        KeyboardHandler(config.keyboard, config.controls, on_note=on_note,
+                        on_control=lambda name: None)
         
-        print("✅ All components initialized")
-        
-        # Test callbacks
-        def on_note_on(key, midi):
-            freq = music.midi_to_frequency(midi)
-            audio.play_note(key, freq)
-            print(f"♪ {key} -> {midi_to_note(midi)} ({freq:.1f} Hz)")
-        
-        def on_note_off(key, midi):
-            audio.stop_note(key)
-            print(f"♫ {key} -> {midi_to_note(midi)} (off)")
-        
-        keyboard.set_callbacks(on_note_on=on_note_on, on_note_off=on_note_off)
-        
-        print("✅ Callbacks configured")
+        print("✅ All components initialized, callbacks configured")
         
         # Start audio
         audio.start()  # Raises SynthError on failure

@@ -190,7 +190,7 @@ class _AudioProcess:
                         break
 
         elif cmd_type == 'SET_VOLUME':
-            volume = max(0.0, min(1.0, command[1]))
+            volume = command[1]  # Already clamped by AudioEngine.set_volume
             with self.lock:
                 self.volume = volume
                 for note in self.notes:
@@ -323,11 +323,16 @@ class AudioEngine:
                  f"{self.channels} channel(s)")
 
     def set_volume(self, volume: float):
-        """Set master volume (0.0 to 1.0)"""
-        volume = max(0.0, min(1.0, volume))
-        self.volume = volume
+        """Set master volume, clamped to 0.0 - 1.0 (the single place where
+        it is)"""
+        self.volume = max(0.0, min(1.0, volume))
         if self.running:
-            self.command_queue.put(('SET_VOLUME', volume))
+            self.command_queue.put(('SET_VOLUME', self.volume))
+        log.info(f"🔊 Volume: {self.volume * 100:.0f}%")
+
+    def change_volume(self, delta: float):
+        """Change master volume by `delta`"""
+        self.set_volume(self.volume + delta)
 
     def get_volume(self) -> float:
         """Get current master volume"""

@@ -20,10 +20,29 @@ from rich.table import Table
 from rich.text import Text
 
 # Local imports
+from config import CONTROLS
 from logging_setup import console_paused, format_record, log_history
 from music import midi_to_note
 
 REFRESH_PERIOD = 0.1  # seconds between renders (~10 Hz)
+
+# Keymap panel grid widths: notes and controls per row
+NOTE_COLUMNS = 6
+CONTROL_COLUMNS = 5
+
+
+def _rows(count: int, columns: int) -> int:
+    """Number of grid rows needed for `count` cells"""
+    return (count + columns - 1) // columns
+
+
+def _grid(cells: list, columns: int) -> Table:
+    """Table grid of `cells`, `columns` per row"""
+    table = Table.grid(padding=(0, 2))
+    for row_start in range(0, len(cells), columns):
+        row = cells[row_start:row_start + columns]
+        table.add_row(*row, *[""] * (columns - len(row)))
+    return table
 
 
 class SynthTUI:
@@ -80,35 +99,18 @@ class SynthTUI:
         """Middle panel: note keys and control keys"""
         handler = self.synth.keyboard_handler
 
-        notes_table = Table.grid(padding=(0, 2))
         # Sorted by pitch: custom layout files may list notes in any order
-        items = sorted(((key, handler.note_for_key(key)) for key in handler.key_to_midi),
+        notes = sorted(((key, handler.note_for_key(key)) for key in handler.key_to_midi),
                        key=lambda item: item[1])
-        columns = 6
-        for row_start in range(0, len(items), columns):
-            row = []
-            for key, midi in items[row_start:row_start + columns]:
-                row.append(Text.assemble((key, "bold cyan"), " -> ", (midi_to_note(midi), "magenta")))
-            row += [""] * (columns - len(row))
-            notes_table.add_row(*row)
-
-        controls = handler.control_keys
-        controls_text = Text.assemble(
-            (controls['volume_up'], "bold cyan"), "/", (controls['volume_down'], "bold cyan"),
-            " volume   ",
-            (controls['instrument_next'], "bold cyan"), " next instrument   ",
-            (controls['layout_next'], "bold cyan"), " next layout   ",
-            (controls['octave_down'], "bold cyan"), "/", (controls['octave_up'], "bold cyan"),
-            " octave down/up   ",
-            (controls['record_start'], "bold cyan"), "/", (controls['record_stop'], "bold cyan"),
-            " record start/stop   ",
-            (controls['quit'], "bold cyan"), " quit",
-        )
+        note_cells = [Text.assemble((key, "bold cyan"), " -> ", (midi_to_note(midi), "magenta"))
+                      for key, midi in notes]
+        control_cells = [Text.assemble((handler.control_keys[name], "bold cyan"), f" {label}")
+                         for name, label in CONTROLS.items()]
 
         grid = Table.grid()
-        grid.add_row(notes_table)
+        grid.add_row(_grid(note_cells, NOTE_COLUMNS))
         grid.add_row(Text())  # spacer
-        grid.add_row(controls_text)
+        grid.add_row(_grid(control_cells, CONTROL_COLUMNS))
         return Panel(grid, title="Keys", border_style="blue")
 
     def _render_logs(self, max_lines: int) -> Panel:
@@ -122,7 +124,9 @@ class SynthTUI:
     def _render(self) -> Layout:
         """Build the full layout"""
         key_count = len(self.synth.keyboard_handler.key_to_midi)
-        keymap_height = (key_count + 5) // 6 + 4  # note rows + spacer + controls + borders
+        # note rows + spacer + control rows + borders
+        keymap_height = (_rows(key_count, NOTE_COLUMNS) + 1
+                         + _rows(len(CONTROLS), CONTROL_COLUMNS) + 2)
 
         layout = Layout()
         layout.split_column(

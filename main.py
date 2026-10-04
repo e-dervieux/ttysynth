@@ -14,7 +14,7 @@ import threading
 import time
 
 # Local imports
-from config import Config, load_config
+from config import CONTROLS, Config, load_config
 from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine
@@ -24,6 +24,9 @@ from logging_setup import setup_logging
 from tui import SynthTUI
 
 log = logging.getLogger(__name__)
+
+# Volume change of one press of the volume keys
+VOLUME_STEP = 0.05
 
 
 class Synthesizer:
@@ -37,23 +40,27 @@ class Synthesizer:
         self._thread_error = None  # First exception of a crashed background thread
 
         self.music_engine = MusicEngine(config.audio.tuning_freq)
-        self.keyboard_handler = KeyboardHandler(config.keyboard, config.controls,
-                                                config.audio.default_volume)
         self.audio_engine = AudioEngine(config.audio)
+        self.keyboard_handler = KeyboardHandler(config.keyboard, config.controls,
+                                                on_note=self.on_note, on_control=self.on_control)
 
         # Instrument selection (cycled with the instrument-next control key)
         self.instrument_names = list(INSTRUMENTS.keys())
         self.instrument_index = 0
 
-        self.keyboard_handler.set_callbacks(
-            on_note_on=self.on_note_on,
-            on_note_off=self.on_note_off,
-            on_volume_change=self.on_volume_change,
-            on_quit=self.on_quit,
-            on_record_start=self.on_record_start,
-            on_record_stop=self.on_record_stop,
-            on_instrument_next=self.on_instrument_next
-        )
+        # What each control does (see config.CONTROLS)
+        self.actions = {
+            'volume_up': lambda: self.audio_engine.change_volume(+VOLUME_STEP),
+            'volume_down': lambda: self.audio_engine.change_volume(-VOLUME_STEP),
+            'instrument_next': self.next_instrument,
+            'layout_next': self.keyboard_handler.next_layout,
+            'octave_down': lambda: self.keyboard_handler.shift_octave(-1),
+            'octave_up': lambda: self.keyboard_handler.shift_octave(+1),
+            'record_start': self.on_record_start,
+            'record_stop': self.on_record_stop,
+            'quit': self.on_quit,
+        }
+        assert self.actions.keys() == CONTROLS.keys(), "every control needs exactly one action"
 
         log.debug("Synthesizer initialized successfully")
 
@@ -62,23 +69,21 @@ class Synthesizer:
         """Name of the currently selected instrument"""
         return self.instrument_names[self.instrument_index]
 
-    def on_note_on(self, key, midi):
-        """Handle note on events"""
-        frequency = self.music_engine.midi_to_frequency(midi)
-        self.audio_engine.play_note(key, frequency, instrument_type=self.current_instrument)
-        log.debug(f"♪ {key} -> {midi_to_note(midi)} ({frequency:.1f} Hz)")
+    def on_note(self, key: str, midi: int, pressed: bool):
+        """A note key was pressed (note on) or released (note off)"""
+        if pressed:
+            frequency = self.music_engine.midi_to_frequency(midi)
+            self.audio_engine.play_note(key, frequency, instrument_type=self.current_instrument)
+            log.debug(f"♪ {key} -> {midi_to_note(midi)} ({frequency:.1f} Hz)")
+        else:
+            self.audio_engine.stop_note(key)
+            log.debug(f"♫ {key} -> {midi_to_note(midi)} (off)")
 
-    def on_note_off(self, key, midi):
-        """Handle note off events"""
-        self.audio_engine.stop_note(key)
-        log.debug(f"♫ {key} -> {midi_to_note(midi)} (off)")
+    def on_control(self, name: str):
+        """A control key was pressed"""
+        self.actions[name]()
 
-    def on_volume_change(self, volume):
-        """Handle volume change events"""
-        self.audio_engine.set_volume(volume)
-        log.info(f"🔊 Volume: {volume*100:.0f}%")
-
-    def on_instrument_next(self):
+    def next_instrument(self):
         """Cycle to the next instrument"""
         self.instrument_index = (self.instrument_index + 1) % len(self.instrument_names)
         log.info(f"🎹 Instrument: {self.current_instrument}")
