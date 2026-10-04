@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 # Local imports
+from errors import ConfigError, SynthError
 from keymap import build_all_keymaps, normalize_key
 from logger import log
 from music import MIDI_MAX, MIDI_MIN, midi_to_note
@@ -166,9 +167,9 @@ class KeyboardHandler:
         self.key_to_midi = self.keymaps[self.layout]
         self.octave_shift = config.getint('KEYBOARD', 'OCTAVE_SHIFT', fallback=0)
         if not self._octave_shift_fits(self.octave_shift):
-            raise ValueError(f"OCTAVE_SHIFT = {self.octave_shift} puts notes of layout '{self.layout}' "
-                             f"outside the playable range ({midi_to_note(MIDI_MIN)} to "
-                             f"{midi_to_note(MIDI_MAX)})")
+            raise ConfigError(f"OCTAVE_SHIFT = {self.octave_shift} puts notes of layout '{self.layout}' "
+                              f"outside the playable range ({midi_to_note(MIDI_MIN)} to "
+                              f"{midi_to_note(MIDI_MAX)})")
 
         log(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
             f"octave shift: {self.octave_shift:+d})", 0)
@@ -520,16 +521,19 @@ class KeyboardHandler:
                 return name
         return str(key).replace('Key.', '').replace("'", "").lower()
 
-    def _start_pynput(self) -> bool:
-        """Start the pynput global listener and run macOS diagnostics"""
+    def _start_pynput(self):
+        """Start the pynput global listener and run macOS diagnostics
+        (raises SynthError if pynput is unavailable)"""
         try:
             from pynput import keyboard as pk
-        except ImportError:
-            log("Terminal lacks the kitty keyboard protocol and pynput is not "
-                "installed: keyboard input unavailable.", 3)
-            log("Either `pip install pynput` or use a terminal supporting the "
-                "kitty keyboard protocol (iTerm2 3.5+, kitty, WezTerm, ...).", 3)
-            return False
+        except ImportError as e:
+            # Not only "not installed": pynput also raises ImportError when
+            # it has no usable backend (e.g. Linux without X display)
+            raise SynthError(
+                f"Keyboard input unavailable: this terminal lacks the kitty keyboard "
+                f"protocol, and pynput cannot be used ({e}). Install pynput, or use a "
+                f"terminal supporting the protocol (iTerm2 3.5+, kitty, WezTerm, "
+                f"Alacritty, Ghostty).") from e
 
         # pynput does not report modifiers with key events: track the ones
         # turning a press into a shortcut (no note played), as the kitty
@@ -590,7 +594,6 @@ class KeyboardHandler:
         self._reader_thread = threading.Thread(
             target=self._drain_stdin_loop, name='stdin-drain', daemon=True)
         self._reader_thread.start()
-        return True
 
     def _drain_stdin_loop(self):
         """Discard stdin bytes while the pynput backend is active"""
@@ -608,13 +611,17 @@ class KeyboardHandler:
     # ------------------------------------------------------------------
 
     def start(self):
-        """Start keyboard monitoring (detects the best available backend)"""
+        """
+        Start keyboard monitoring (detects the best available backend).
+
+        Raises:
+            SynthError: no usable keyboard input (the terminal is restored)
+        """
         if self.running:
             return
 
         if not sys.stdin.isatty():
-            log("stdin is not a terminal: keyboard input unavailable", 3)
-            return
+            raise SynthError("Keyboard input unavailable: stdin is not a terminal")
 
         self.running = True
         self._enter_cbreak()
@@ -628,8 +635,11 @@ class KeyboardHandler:
             self._reader_thread.start()
         else:
             self.backend = 'pynput'
-            if not self._start_pynput():
-                self.backend = None
+            try:
+                self._start_pynput()
+            except SynthError:
+                self.stop()  # Restore the terminal before reporting
+                raise
 
     def stop(self):
         """Stop keyboard monitoring and restore the terminal"""

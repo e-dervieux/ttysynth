@@ -124,9 +124,7 @@ def test_audio_engine():
         print("\n🎵 Testing audio engine with multiple frequencies...")
         
         # Start the audio engine
-        if not audio.start():
-            print("❌ Failed to start audio engine")
-            return False
+        audio.start()  # Raises SynthError on failure
         
         print("✅ Audio engine started")
         
@@ -208,9 +206,7 @@ def test_full_integration():
         print("✅ Callbacks configured")
         
         # Start audio
-        if not audio.start():
-            print("❌ Could not start audio for integration test")
-            return False
+        audio.start()  # Raises SynthError on failure
         
         print("✅ Integration test setup completed")
         print("📋 Would test keyboard integration, but that requires interactive input")

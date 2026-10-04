@@ -30,8 +30,9 @@ import numpy as np
 import sounddevice as sd
 
 # Local imports
-from logger import log
 from classes import Note, Flute, INSTRUMENTS
+from errors import SynthError
+from logger import log
 
 # Polyphony headroom applied before tanh soft-clipping: with a gain of 1/3,
 # a single note keeps a near-linear (low distortion) response and three
@@ -337,9 +338,15 @@ class AudioEngine:
                 break
 
     def start(self):
-        """Start audio engine (spawns the audio process)"""
+        """
+        Start audio engine (spawns the audio process).
+
+        Raises:
+            SynthError: the audio stream could not be started (the audio
+                        process is stopped)
+        """
         if self.running:
-            return True
+            return
 
         self.running = True
         self._ready_event.clear()
@@ -360,17 +367,14 @@ class AudioEngine:
 
         # Wait until the audio process reports that its stream is up
         if not self._ready_event.wait(timeout=10.0):
-            log("Audio process did not start in time", 3)
             self.stop()
-            return False
+            raise SynthError("Audio process did not start within 10 s")
 
         if self._start_error is not None:
-            log(f"Failed to start audio engine: {self._start_error}", 3)
             self.stop()
-            return False
+            raise SynthError(self._start_error)
 
         log("Audio engine started successfully", 1)
-        return True
 
     def stop(self):
         """Stop audio engine (the audio process closes its own stream)"""

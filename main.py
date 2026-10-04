@@ -8,6 +8,7 @@ synthesizes sound in its callback. See audio_engine.py for details.
 """
 
 # Global imports
+import sys
 import time
 
 # Local imports
@@ -15,6 +16,7 @@ from music import MusicEngine, midi_to_note
 from keyboard_handler import KeyboardHandler
 from audio_engine import AudioEngine
 from classes import INSTRUMENTS
+from errors import SynthError
 from logger import log
 from tui import SynthTUI
 
@@ -94,25 +96,13 @@ class Synthesizer:
         log("Recording not implemented", 2)
 
     def start(self):
-        """Start the synthesizer"""
-        if self.running:
-            return True
-
+        """Start the synthesizer (raises SynthError if a component cannot
+        start; see run() for the cleanup)"""
         log("Starting synthesizer...", 0)
         self.running = True
-
-        # Start audio engine
-        if not self.audio_engine.start():
-            log("Failed to start audio engine", 3)
-            self.running = False
-            return False
-
-        # Start keyboard handler
+        self.audio_engine.start()
         self.keyboard_handler.start()
-
         log("✅ Synthesizer started successfully!", 0)
-
-        return True
 
     def stop(self):
         """Stop the synthesizer"""
@@ -129,32 +119,39 @@ class Synthesizer:
         log("Synthesizer stopped", 0)
 
     def run(self, use_tui=True):
-        """Run the synthesizer (blocking)"""
-        if not self.start():
-            return
-
+        """Run the synthesizer (blocking). Components are always stopped on
+        exit, including when starting one of them failed."""
         try:
+            self.start()
             if use_tui:
                 SynthTUI(self).run()
             else:
                 while self.running:
                     time.sleep(0.1)
         except KeyboardInterrupt:
-            log("Keyboard interrupt received", 2)
+            # Ctrl+C is a normal way to quit
+            log("Interrupted (Ctrl+C)", 1)
         finally:
             self.stop()
 
 
-def main():
-    """Main function"""
+def main() -> int:
+    """Main function, returns the process exit code"""
     log("Python Command Line Audio Synthesizer", 1)
     log("=====================================", 1)
 
-    synth = Synthesizer()
-    synth.run()
+    try:
+        Synthesizer().run()
+    except SynthError as e:
+        # Expected failure (configuration, audio device, keyboard input):
+        # a message is enough. Other exceptions are bugs: keep the traceback.
+        log(str(e), 3)
+        return 1
+
+    log("Synthesizer exited successfully", 1)
+    return 0
 
 
 if __name__ == "__main__":
     log("Starting synthesizer", level=0, display_level=1)
-    main()
-    log("Synthesizer exited successfully", 1)
+    sys.exit(main())
