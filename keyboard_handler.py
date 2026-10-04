@@ -336,10 +336,7 @@ class KeyboardHandler:
         buf = b''
         while time.monotonic() < deadline:
             timeout = max(0.0, deadline - time.monotonic())
-            try:
-                ready, _, _ = select.select([fd], [], [], timeout)
-            except (OSError, ValueError):
-                return False
+            ready, _, _ = select.select([fd], [], [], timeout)
             if not ready:
                 break
             data = os.read(fd, 256)
@@ -380,20 +377,19 @@ class KeyboardHandler:
             return text.lower()
         if keycode >= _FUNCTIONAL_KEY_FLOOR:
             return None
-        try:
-            char = chr(keycode)
-        except ValueError:
-            return None
+        char = chr(keycode)
         return char.lower() if char.isprintable() else None
 
     def _dispatch_kitty_event(self, params: str):
         """Parse and dispatch one 'CSI params u' key event.
         Format: keycode[:alternates] [; modifiers[:event-type] [; text-codepoints]]"""
+        # _CSI_RE only lets digits, ':' and ';' through: fields are digit
+        # strings, possibly empty
         fields = params.split(';')
-        try:
-            keycode = int(fields[0].split(':')[0])
-        except (ValueError, IndexError):
+        code = fields[0].split(':')[0]
+        if not code:
             return
+        keycode = int(code)
 
         modifiers = 0
         event = _EVENT_PRESS
@@ -401,18 +397,15 @@ class KeyboardHandler:
             mods, _, event_type = fields[1].partition(':')
             if mods:
                 modifiers = int(mods) - 1
-            if event_type:
-                try:
-                    event = int(event_type)
-                except ValueError:
-                    pass
+            if event_type.isdigit():
+                event = int(event_type)
 
         text = ''
-        if len(fields) > 2 and fields[2]:
-            try:
-                text = ''.join(chr(int(cp)) for cp in fields[2].split(':') if cp)
-            except (ValueError, OverflowError):
-                text = ''
+        if len(fields) > 2:
+            codepoints = [int(cp) for cp in fields[2].split(':') if cp]
+            # Malformed text (beyond Unicode) is ignored: the keycode remains
+            if all(cp <= sys.maxunicode for cp in codepoints):
+                text = ''.join(map(chr, codepoints))
 
         # The keycode is the unshifted key of the current layout, identical
         # for press and release: it is the key's physical identity.
@@ -474,31 +467,23 @@ class KeyboardHandler:
         return buf
 
     def _kitty_read_loop(self):
-        """Reader thread: blocking select on stdin, parse, dispatch"""
+        """Reader thread: blocking select on stdin, parse, dispatch.
+        Any exception ends the thread and, through threading.excepthook,
+        shuts the synthesizer down (see Synthesizer.run)."""
         fd = sys.stdin.fileno()
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         buf = ''
         log("Keyboard input: kitty keyboard protocol (stdin)", 1)
 
         while self.running:
-            try:
-                ready, _, _ = select.select([fd], [], [], 0.25)
-            except (OSError, ValueError):
-                break
+            ready, _, _ = select.select([fd], [], [], 0.25)
             if not ready:
                 continue
-            try:
-                data = os.read(fd, 256)
-            except OSError:
-                break
+            data = os.read(fd, 256)
             if not data:
-                break
-            try:
-                buf += decoder.decode(data)
-                buf = self._consume_input(buf)
-            except Exception as e:
-                log(f"Error processing keyboard input: {e}", 3)
-                buf = ''
+                raise SynthError("Keyboard input closed")
+            buf += decoder.decode(data)
+            buf = self._consume_input(buf)
 
     # ------------------------------------------------------------------
     # pynput fallback backend
@@ -545,22 +530,16 @@ class KeyboardHandler:
         held_mods = set()
 
         def on_press(key):
-            try:
-                if key in shortcut_mods:
-                    held_mods.add(key)
-                elif not held_mods:
-                    key_char = self._pynput_key_char(key, pk)
-                    if key_char:
-                        self._key_down(self._pynput_key_id(key), key_char)
-            except Exception as e:
-                log(f"Error in key press handler ({key}): {e}", 3)
+            if key in shortcut_mods:
+                held_mods.add(key)
+            elif not held_mods:
+                key_char = self._pynput_key_char(key, pk)
+                if key_char:
+                    self._key_down(self._pynput_key_id(key), key_char)
 
         def on_release(key):
-            try:
-                held_mods.discard(key)
-                self._key_up(self._pynput_key_id(key))
-            except Exception as e:
-                log(f"Error in key release handler ({key}): {e}", 3)
+            held_mods.discard(key)
+            self._key_up(self._pynput_key_id(key))
 
         self._listener = pk.Listener(on_press=on_press, on_release=on_release)
         self._listener.start()
@@ -590,21 +569,30 @@ class KeyboardHandler:
                     "menu (Terminal.app / iTerm2: 'Secure Keyboard Entry').", 3)
 
         # Drain stdin so typed characters don't pile up in the tty buffer
-        # (events come from the global hook, not from stdin)
+        # (events come from the global hook, not from stdin); this thread
+        # also watches the listener
         self._reader_thread = threading.Thread(
             target=self._drain_stdin_loop, name='stdin-drain', daemon=True)
         self._reader_thread.start()
 
     def _drain_stdin_loop(self):
-        """Discard stdin bytes while the pynput backend is active"""
+        """
+        Discard stdin bytes while the pynput backend is active.
+
+        Also watches the pynput listener: pynput catches the exceptions of
+        our callbacks itself, stops the listener and keeps the exception
+        until join(). Joining a dead listener re-raises it here, in a thread
+        of ours, so that like any exception of this thread it shuts the
+        synthesizer down through threading.excepthook (see Synthesizer.run).
+        """
         fd = sys.stdin.fileno()
         while self.running:
-            try:
-                ready, _, _ = select.select([fd], [], [], 0.25)
-                if ready and not os.read(fd, 4096):
-                    break
-            except (OSError, ValueError):
-                break
+            ready, _, _ = select.select([fd], [], [], 0.25)
+            if ready and not os.read(fd, 4096):
+                raise SynthError("Keyboard input closed")
+            if not self._listener.is_alive():
+                self._listener.join()  # Re-raises the callback exception, if any
+                raise SynthError("Keyboard listener (pynput) stopped unexpectedly")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -665,31 +653,29 @@ class KeyboardHandler:
         """cbreak: char-at-a-time input, no echo. The tty still raises SIGINT
         on a raw Ctrl+C byte; the kitty protocol encodes Ctrl+C as an escape
         code instead, handled in _dispatch_kitty_event."""
-        try:
-            fd = sys.stdin.fileno()
-            self._saved_term_attrs = termios.tcgetattr(fd)
-            # TCSANOW: apply immediately. The default TCSAFLUSH would wait
-            # for pending terminal output to drain, which can block.
-            tty.setcbreak(fd, termios.TCSANOW)
-            # Belt and braces: ensure echo is off (setcbreak behavior around
-            # ECHO changed across Python versions)
-            attrs = termios.tcgetattr(fd)
-            attrs[3] &= ~termios.ECHO
-            termios.tcsetattr(fd, termios.TCSANOW, attrs)
-        except (termios.error, ValueError, OSError) as e:
-            log(f"Could not set terminal cbreak mode: {e}", 3)
+        fd = sys.stdin.fileno()
+        self._saved_term_attrs = termios.tcgetattr(fd)
+        # TCSANOW: apply immediately. The default TCSAFLUSH would wait
+        # for pending terminal output to drain, which can block.
+        tty.setcbreak(fd, termios.TCSANOW)
+        # Belt and braces: ensure echo is off (setcbreak behavior around
+        # ECHO changed across Python versions)
+        attrs = termios.tcgetattr(fd)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
 
     def _leave_cbreak(self):
-        """Restore saved terminal attributes and flush pending input"""
+        """Restore saved terminal attributes and flush pending input (best
+        effort: a failure is logged, the rest of the shutdown must go on)"""
+        if self._saved_term_attrs is None:
+            return  # cbreak was never entered
+        fd = sys.stdin.fileno()
         try:
-            fd = sys.stdin.fileno()
-            if self._saved_term_attrs is not None:
-                termios.tcsetattr(fd, termios.TCSANOW, self._saved_term_attrs)
-                self._saved_term_attrs = None
-            if os.isatty(fd):
-                termios.tcflush(fd, termios.TCIFLUSH)
-        except (termios.error, ValueError, OSError) as e:
+            termios.tcsetattr(fd, termios.TCSANOW, self._saved_term_attrs)
+            termios.tcflush(fd, termios.TCIFLUSH)
+        except (termios.error, OSError) as e:
             log(f"Could not restore terminal mode: {e}", 2)
+        self._saved_term_attrs = None
 
     @property
     def capture_status(self) -> str:

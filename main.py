@@ -9,6 +9,7 @@ synthesizes sound in its callback. See audio_engine.py for details.
 
 # Global imports
 import sys
+import threading
 import time
 
 # Local imports
@@ -28,6 +29,7 @@ class Synthesizer:
         """Initialize the synthesizer"""
         self.running = False
         self._stopped = False
+        self._thread_error = None  # First exception of a crashed background thread
 
         # Initialize components with config file
         self.music_engine = MusicEngine(config_file=config_file)
@@ -112,15 +114,41 @@ class Synthesizer:
         self.running = False
 
         log("Stopping synthesizer...", 0)
-        self.keyboard_handler.stop()
-        log("Keyboard handler stopped", 0)
-        self.audio_engine.stop()
-        log("Audio engine stopped", 0)
+        try:
+            self.keyboard_handler.stop()
+            log("Keyboard handler stopped", 0)
+        finally:
+            # Even if the keyboard cleanup failed: a still running audio
+            # process would block the interpreter exit
+            self.audio_engine.stop()
+            log("Audio engine stopped", 0)
         log("Synthesizer stopped", 0)
 
+    def _on_thread_crash(self, args):
+        """
+        threading.excepthook: a background thread died (keyboard input,
+        audio status...). Keep the first exception, re-raised by run() once
+        everything is stopped, and request that shutdown: with input dead,
+        the quit keys may be dead as well.
+        """
+        if self._thread_error is None:
+            self._thread_error = args.exc_value
+            thread_name = args.thread.name if args.thread is not None else '?'
+            # Debug only: main() reports the error itself after the shutdown
+            log(f"Thread '{thread_name}' failed, shutting down: {args.exc_value!r}", 0)
+        self.running = False
+
     def run(self, use_tui=True):
-        """Run the synthesizer (blocking). Components are always stopped on
-        exit, including when starting one of them failed."""
+        """
+        Run the synthesizer (blocking). Components are always stopped on
+        exit, including when starting one of them failed.
+
+        Raises:
+            SynthError: expected failure (see errors.py)
+            Exception: the exception of a crashed background thread, if any
+        """
+        previous_hook = threading.excepthook
+        threading.excepthook = self._on_thread_crash
         try:
             self.start()
             if use_tui:
@@ -133,6 +161,10 @@ class Synthesizer:
             log("Interrupted (Ctrl+C)", 1)
         finally:
             self.stop()
+            threading.excepthook = previous_hook
+
+        if self._thread_error is not None:
+            raise self._thread_error
 
 
 def main() -> int:

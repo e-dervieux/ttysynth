@@ -188,7 +188,10 @@ class _AudioProcess:
         """Main loop of the audio process: consume commands, emit status"""
         try:
             stream = self._create_stream()
-        except Exception as e:
+        except sd.PortAudioError as e:
+            # Expected failure (device unavailable, unsupported settings...),
+            # reported to the user by AudioEngine.start(). Other exceptions
+            # are bugs: they propagate (see issue 6 for their detection).
             self.status_queue.put(('ERROR', f"Could not create audio stream: {e}"))
             self.status_queue.put(('EXIT',))
             return
