@@ -50,11 +50,14 @@ from synth.errors import SynthError
 
 log = logging.getLogger(__name__)
 
-# Polyphony headroom applied before tanh soft-clipping. With a gain of 1/3,
-# a single full-scale note peaks at tanh(1/3) = 0.32 (about -10 dBFS) with a
-# near-linear (low distortion) response; three in phase peak at tanh(1) =
-# 0.76 and five at 0.93: chords are gently compressed instead of hard
-# clipped.
+# Output stage of the audio callback: mix (sum of the notes) x volume x
+# HEADROOM, then tanh soft clipping, like a power amp: the volume comes
+# first, and only a too loud output saturates. tanh has unity slope at 0, so
+# quiet signals pass through (almost) untouched. With a gain of 1/3, a single
+# full-scale note at full volume peaks at tanh(1/3) = 0.32 (about -10 dBFS)
+# with a near-linear (low distortion) response; three in phase peak at
+# tanh(1) = 0.76 and five at 0.93: chords are gently compressed instead of
+# hard clipped.
 HEADROOM = 1.0 / 3.0
 
 # How often the audio process reports its status to the main process (seconds)
@@ -79,17 +82,6 @@ class _StatusQueueHandler(logging.handlers.QueueHandler):
 class AudioProcessCrash(RuntimeError):
     """A bug in the audio process. Exceptions cannot cross the process
     boundary: the message holds the audio process traceback."""
-
-
-def saturate_audio(buffer: np.ndarray) -> np.ndarray:
-    """
-    Soft-clip audio to [-1.0, 1.0] using tanh.
-
-    tanh has unity slope at 0, so quiet signals pass through (almost)
-    untouched and compression only kicks in near full scale. The HEADROOM
-    pre-gain preserves clean polyphony (see HEADROOM comment above).
-    """
-    return np.tanh(HEADROOM * buffer)
 
 
 def format_duration(seconds: float) -> str:
@@ -168,11 +160,12 @@ class _AudioProcess:
         self.buffer_size = audio_config.buffer_size
         self.channels = audio_config.channels
 
-        # Shared between the command loop and the audio callback. The lock is
-        # only ever held for microseconds (list append/comprehension), so the
-        # callback is effectively never blocked.
+        # Shared between the command loop and the audio callback. The lock
+        # guards the note list; it is only ever held for microseconds (list
+        # append/comprehension), so the callback is effectively never blocked.
         self.lock = threading.Lock()
         self.notes = []
+        # A float, replaced at once: needs no lock
         self.volume = audio_config.default_volume
 
         self.xruns = 0
@@ -186,7 +179,8 @@ class _AudioProcess:
     def _audio_callback(self, outdata, frames, time_info, status):
         """
         PortAudio callback - runs on the real-time audio thread.
-        Mixes all active notes, soft-clips, and writes to the output buffer.
+        Mixes all active notes, applies the volume and soft-clips (see
+        HEADROOM), and writes to the output buffer.
         """
         # The try block costs nothing until an exception is raised (zero-cost
         # exception handling, Python >= 3.11)
@@ -205,10 +199,10 @@ class _AudioProcess:
                         buffer += note.get_next_buffer(frames)
                     # Prune notes whose release phase has completed
                     self.notes = [note for note in self.notes if not note.ended]
-                    buffer = saturate_audio(buffer)
+                    # Scalars first: a single multiplication of the buffer
+                    buffer = np.tanh((self.volume * HEADROOM) * buffer)
 
-            for ch in range(self.channels):
-                outdata[:, ch] = buffer
+            outdata[:] = buffer[:, np.newaxis]  # Same signal on every channel
 
             recorder = self.recorder  # Read once: the command loop may reset it
             if recorder is not None:
@@ -263,7 +257,7 @@ class _AudioProcess:
         if cmd_type == 'PLAY_NOTE':
             key, frequency, instrument_type = command[1], command[2], command[3]
             instrument = INSTRUMENTS[instrument_type](self.sample_rate)
-            note = Note(frequency, instrument, self.volume, key)
+            note = Note(frequency, instrument, key)
             with self.lock:
                 self.notes.append(note)
             # Confirms the command reached the audio process (the main process
@@ -280,11 +274,7 @@ class _AudioProcess:
                         break
 
         elif cmd_type == 'SET_VOLUME':
-            volume = command[1]  # Already clamped by AudioEngine.set_volume
-            with self.lock:
-                self.volume = volume
-                for note in self.notes:
-                    note.volume = volume
+            self.volume = command[1]  # Already clamped by AudioEngine.set_volume
 
         elif cmd_type == 'RECORD_START':
             self._start_recording(command[1])

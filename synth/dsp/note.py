@@ -22,20 +22,18 @@ class Phase(IntEnum):
 class Note:
     """Represents a single note with its own state and instrument"""
 
-    def __init__(self, pitch: float, instrument: Instrument, volume: float = 1.0, key: str = ''):
+    def __init__(self, pitch: float, instrument: Instrument, key: str = ''):
         """
         Initialize a Note
 
         Args:
             pitch: Frequency in Hz
             instrument: Instrument instance to use for sound generation
-            volume: Volume multiplier (0.0 to 1.0)
             key: Keyboard key identifier this note is bound to (used to find
                  the note again when the key is released)
         """
         self.pitch = pitch
         self.instrument = instrument
-        self.volume = volume
         self.key = key
 
         # Time tracking
@@ -101,6 +99,8 @@ class Note:
         elif self.phase == Phase.DECAY:
             self.phase = Phase.SUSTAIN
             self.phase_start_sample = sample
+            # Not updated by the sustain fast path: exact from here on
+            self.current_envelope = self.sustain_level
 
         elif self.phase == Phase.RELEASE:
             self.ended = True
@@ -120,6 +120,13 @@ class Note:
 
         # Generate raw audio from instrument (no envelope applied)
         audio_buffer = self.instrument.generate_audio(self.pitch, num_samples, self.t_int)
+
+        # Fast path for held notes: the sustain envelope is a constant
+        if self.phase == Phase.SUSTAIN:
+            self.t_int += num_samples
+            if self.sustain_level == 1.0:
+                return audio_buffer
+            return audio_buffer * self.sustain_level
 
         # Calculate envelope window by looping over phases
         envelope_window = np.zeros(num_samples, dtype=np.float32)
@@ -168,8 +175,9 @@ class Note:
             if samples_to_process >= samples_remaining_in_phase and self.phase != Phase.SUSTAIN:
                 self._transition_to_next_phase(self.t_int + samples_processed)
 
-        # Apply envelope window and volume
-        audio_buffer = audio_buffer * envelope_window * self.volume
+        # Apply envelope window (the volume is applied to the mix, see
+        # audio_engine.py)
+        audio_buffer = audio_buffer * envelope_window
 
         # Update time counter
         self.t_int += num_samples

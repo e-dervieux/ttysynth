@@ -3,6 +3,7 @@
 fake sounddevice module (tests/fakes) simulates the audio device and its
 failures (FAKE_SD environment variable)."""
 
+import copy
 import logging
 import queue
 import threading
@@ -14,8 +15,9 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from synth.audio_engine import (RECORDING_ERRORS, AudioEngine, AudioProcessCrash, _AudioProcess,
-                                _Recorder)
+from synth.audio_engine import (HEADROOM, RECORDING_ERRORS, AudioEngine, AudioProcessCrash,
+                                _AudioProcess, _Recorder)
+from synth.dsp import Flute, Note
 from synth.errors import SynthError
 
 
@@ -91,6 +93,22 @@ def test_unknown_device(audio_config, device, message):
     with pytest.raises(SynthError, match=f'Output device: {message} \\(see --list-devices\\)'):
         engine.start()
     assert engine.process is None  # Checked before starting the audio process
+
+
+@pytest.mark.parametrize('volume', [1.0, 0.25])
+def test_output_stage(audio_config, volume):
+    """Mix x volume x HEADROOM, then soft clipping (in-process audio
+    process): the volume comes before the saturation"""
+    process = _AudioProcess(queue.Queue(), queue.Queue(), replace(audio_config, default_volume=volume))
+    notes = [Note(440.0 * ratio, Flute(48000)) for ratio in (1, 1.25, 1.5)]
+    twins = copy.deepcopy(notes)
+    process.notes = notes
+    outdata = np.zeros((64, 2), np.float32)
+    for _ in range(100):
+        process._audio_callback(outdata, 64, None, None)
+        mix = sum(twin.get_next_buffer(64) for twin in twins)
+        expected = np.tanh(volume * HEADROOM * mix)
+        assert outdata[:, 0] == pytest.approx(expected) and outdata[:, 1] == pytest.approx(expected)
 
 
 def test_stream_cannot_be_opened(engine, monkeypatch):

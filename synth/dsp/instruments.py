@@ -63,9 +63,13 @@ class Flute(Instrument):
         self.noise_level = 0.0   # Noise amplitude relative to the tone
         self.noise_state = 0.0   # State of the pink noise filter
 
-        # Harmonics
+        # Harmonics: weight of the fundamental, 2nd harmonic, 3rd...
         self.harmonics = [1, 0.2, 0.14, 0, 0.05]
-        self.normalization_factor = 1 / np.sum(self.harmonics)
+        # Harmonic numbers and normalized weights (summing to 1), zero
+        # weights left out: they would only cost time
+        weights = np.array(self.harmonics) / np.sum(self.harmonics)
+        self._harmonic_numbers = np.flatnonzero(weights) + 1.0
+        self._harmonic_weights = weights[weights != 0]
 
     def generate_audio(self, frequency: float, num_samples: int, t_start: int) -> np.ndarray:
         """
@@ -79,15 +83,12 @@ class Flute(Instrument):
         Returns:
             Audio buffer as numpy array (without envelope)
         """
-        # Generate sine wave with harmonics
-        t = (np.arange(num_samples) + t_start) / self.sample_rate
-        angle = 2 * np.pi * frequency * t
-        audio_buffer = np.zeros(num_samples)
-        for h_idx, h in enumerate(self.harmonics):
-            audio_buffer += h * np.sin((h_idx + 1) * angle)
-        audio_buffer *= self.normalization_factor
-
-        return audio_buffer.astype(np.float32)
+        # All harmonics at once: a single np.sin over a (samples x harmonics)
+        # matrix, then the weighted sum. At 64 samples, numpy time is mostly
+        # per-call overhead: few calls on bigger arrays beat a loop.
+        angle = (2 * np.pi * frequency / self.sample_rate) * np.arange(t_start, t_start + num_samples)
+        harmonics = np.sin(np.multiply.outer(angle, self._harmonic_numbers))
+        return (harmonics @ self._harmonic_weights).astype(np.float32)
 
 
 class PluckedString(Instrument):

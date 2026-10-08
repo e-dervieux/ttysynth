@@ -71,14 +71,27 @@ def test_envelope_with_odd_buffer_sizes():
     assert render(other, seconds=0.06, block=100)[:2880] == pytest.approx(render(reference, seconds=0.06)[:2880])
 
 
-def test_volume_scales_the_output():
-    loud, quiet = Note(440.0, Constant(SAMPLE_RATE), 1.0), Note(440.0, Constant(SAMPLE_RATE), 0.25)
-    assert render(quiet, seconds=0.05) == pytest.approx(0.25 * render(loud, seconds=0.05))
+def test_release_after_sustain_starts_exactly_at_the_sustain_level():
+    """Decay ending exactly on a buffer boundary (1440 samples = 30 x 48):
+    the sustain fast path then never computes an envelope value"""
+    note = Note(440.0, Constant(SAMPLE_RATE))
+    render(note, seconds=0.1, block=48)
+    note.release()
+    assert note.get_next_buffer(48)[0] == pytest.approx(0.5, abs=1e-7)
 
 
-def test_flute_stays_within_volume():
-    note = Note(440.0, Flute(SAMPLE_RATE), volume=0.7)
-    assert np.max(np.abs(render(note, seconds=0.5))) <= 0.7 + 1e-6
+def test_flute_matches_the_additive_formula():
+    """sum of weight x sin(k x angle), normalized by the sum of the weights"""
+    flute = Flute(SAMPLE_RATE)
+    t = np.arange(10_000, 10_000 + 4800) / SAMPLE_RATE
+    angle = 2 * np.pi * 261.6 * t
+    expected = sum(w * np.sin(k * angle) for k, w in enumerate(flute.harmonics, 1)) / sum(flute.harmonics)
+    assert flute.generate_audio(261.6, 4800, 10_000) == pytest.approx(expected, abs=1e-6)
+
+
+def test_flute_stays_within_full_scale():
+    note = Note(440.0, Flute(SAMPLE_RATE))
+    assert np.max(np.abs(render(note, seconds=0.5))) <= 1.0 + 1e-6
 
 
 def measured_pitch(signal, expected):
