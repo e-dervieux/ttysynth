@@ -38,7 +38,7 @@ import termios
 import threading
 import time
 import tty
-from typing import Callable, Optional
+from collections.abc import Callable
 
 # Local imports
 from synth.errors import SynthError
@@ -153,7 +153,7 @@ def _detect_kitty_protocol() -> bool:
 
 
 @functools.cache
-def _carbon() -> Optional[ctypes.CDLL]:
+def _carbon() -> ctypes.CDLL | None:
     """macOS Carbon framework, loaded on first use only. None if it cannot
     be loaded: logged once, Secure Keyboard Entry detection is then off
     (a mere diagnostic, not worth stopping the synthesizer)."""
@@ -290,7 +290,7 @@ class KittyInput(InputBackend):
             self._pop_flags()
 
     @staticmethod
-    def _key_from_code(keycode: int, text: str) -> Optional[str]:
+    def _key_from_code(keycode: int, text: str) -> str | None:
         """Resolve a kitty key code (+ optional associated text) to a key
         name. Returns None for keys we don't handle (modifiers, F-keys...)"""
         if keycode in _CODE_NAMES:
@@ -513,7 +513,7 @@ class PynputInput(InputBackend):
         return key if vk is None else vk
 
     @staticmethod
-    def _key_name(key, pk) -> Optional[str]:
+    def _key_name(key, pk) -> str | None:
         """Normalized key name of a pynput key object"""
         if hasattr(key, 'char') and key.char is not None:
             return key.char.lower()

@@ -10,7 +10,7 @@ octaves.
 # Global imports
 import logging
 import threading
-from typing import Callable, Dict
+from collections.abc import Callable
 
 # Local imports
 from synth.config import KeyboardConfig
@@ -59,10 +59,10 @@ class KeyboardHandler:
         # Held note keys, with the note each one started: a release stops that
         # note even if the layout or octave changed in the meantime. Written
         # by the input thread, read by the TUI.
-        self.pressed_keys: Dict[str, int] = {}
+        self.pressed_keys: dict[str, int] = {}
         self.key_lock = threading.Lock()
 
-        self.backend: InputBackend = None  # Set by start()
+        self.backend: InputBackend | None = None  # Set by start()
 
         log.debug(f"Layouts: {', '.join(self.keymaps)} (current: {self.layout}, "
                   f"octave shift: {self.octave_shift:+d})")
@@ -135,7 +135,7 @@ class KeyboardHandler:
             self.pressed_keys[key] = midi
         self._on_note(key, midi, True)
 
-    def get_pressed_keys(self) -> Dict[str, int]:
+    def get_pressed_keys(self) -> dict[str, int]:
         """Currently held note keys and their notes (thread-safe copy)"""
         with self.key_lock:
             return self.pressed_keys.copy()
