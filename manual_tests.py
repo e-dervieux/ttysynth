@@ -16,7 +16,7 @@ import sounddevice as sd
 # Local imports
 from synth.music import MusicEngine, midi_to_note, note_to_midi
 from synth.keyboard_handler import KeyboardHandler
-from synth.audio_engine import AudioEngine
+from synth.audio_engine import AudioEngine, list_devices
 from synth.config import load_config
 from synth.logging_setup import setup_logging
 
@@ -181,8 +181,8 @@ def test_audio_engine():
         
         print("✅ Audio engine created successfully")
         
-        # Test device info
-        audio.print_device_info()
+        print("\nAvailable audio devices:")
+        print(list_devices())
         
         print("\n🎵 Testing audio engine with multiple frequencies...")
         

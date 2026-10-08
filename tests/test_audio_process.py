@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 
 import pytest
 
@@ -64,6 +65,28 @@ def test_volume_is_clamped(engine):
     assert engine.get_volume() == 1.0
     engine.change_volume(-5.0)
     assert engine.get_volume() == 0.0
+
+
+def test_device_by_name(audio_config, caplog):
+    """The audio process gets the index of the device (see the fake)"""
+    caplog.set_level(logging.INFO)
+    engine = AudioEngine(replace(audio_config, device='speakers'))
+    try:
+        engine.start()
+    finally:
+        engine.stop()
+    assert 'Output device: Fake Speakers' in caplog.text
+
+
+@pytest.mark.parametrize('device, message', [
+    ('headphones', "No output device matching 'headphones'"),
+    (7, 'Error querying device 7'),
+])
+def test_unknown_device(audio_config, device, message):
+    engine = AudioEngine(replace(audio_config, device=device))
+    with pytest.raises(SynthError, match=f'Output device: {message} \\(see --list-devices\\)'):
+        engine.start()
+    assert engine.process is None  # Checked before starting the audio process
 
 
 def test_stream_cannot_be_opened(engine, monkeypatch):

@@ -33,19 +33,31 @@ class CallbackAbort(Exception):
     pass
 
 
-def query_devices():
-    return 'fake device list'
+FAKE_DEVICE = {'name': 'Fake Speakers', 'index': 0}
+
+
+def query_devices(device=None, kind=None):
+    """The device list, or one output device: 'Fake Speakers', index 0,
+    also the default"""
+    if device is None and kind is None:
+        return 'fake device list'
+    if device in (None, 0) or (isinstance(device, str) and device.lower() in 'fake speakers'):
+        return FAKE_DEVICE
+    if isinstance(device, int):
+        raise PortAudioError(f'Error querying device {device}')
+    raise ValueError(f'No output device matching {device!r}')
 
 
 class OutputStream:
     """Calls the callback from a thread, at the pace of the audio buffers"""
 
-    def __init__(self, callback, samplerate, blocksize, channels, dtype, latency):
+    def __init__(self, callback, device, samplerate, blocksize, channels, dtype, latency):
         self.mode = os.environ.get('FAKE_SD', '')
         if self.mode == 'open-fail':
             raise PortAudioError('Error opening OutputStream: Invalid sample rate [PaErrorCode -9997]')
         if self.mode == 'early-death':
             os._exit(3)
+        assert device == FAKE_DEVICE['index'], device
         self.callback, self.samplerate = callback, samplerate
         self.blocksize, self.channels = blocksize, channels
         self.active = False

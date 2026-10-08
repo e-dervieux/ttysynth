@@ -1,6 +1,7 @@
 """Synthesizer: control actions, Ctrl+C, crashed threads, exit codes
 (synth/app.py)"""
 
+import logging
 import os
 import signal
 import threading
@@ -10,7 +11,7 @@ from dataclasses import replace
 import pytest
 
 import synth.app as app
-from synth.config import CONTROLS
+from synth.config import CONTROLS, DEFAULT_CONFIG_PATH
 from synth.errors import ConfigError, SynthError
 from synth.keyboard_handler import KeyboardHandler
 
@@ -118,36 +119,91 @@ def test_crashed_thread_stops_the_synthesizer_and_is_reraised(synth, headless):
 
 @pytest.fixture
 def quiet_main(monkeypatch):
-    """main() without configuring the logging of the test session"""
-    monkeypatch.setattr(app, 'setup_logging', lambda level: None)
+    """main() without configuring the logging of the test session: the
+    level it asks for is in .levels"""
+    levels = []
+    monkeypatch.setattr(app, 'setup_logging', levels.append)
+    return levels
+
+
+@pytest.fixture
+def captured_config(monkeypatch):
+    """Synthesizer.run() records the configuration instead of running"""
+    configs = []
+    monkeypatch.setattr(app.Synthesizer, 'run', lambda self: configs.append(self.audio_engine.config))
+    return configs
 
 
 def test_main_returns_0_on_normal_exit(quiet_main, monkeypatch, config):
-    monkeypatch.setattr(app, 'load_config', lambda: config)
+    monkeypatch.setattr(app, 'load_config', lambda path: config)
     monkeypatch.setattr(app.Synthesizer, 'run', lambda self: None)
-    assert app.main() == 0
+    assert app.main([]) == 0
 
 
 @pytest.mark.parametrize('error', [ConfigError('bad option'), SynthError('no audio device')])
 def test_main_returns_1_on_expected_failure(quiet_main, monkeypatch, config, caplog, error):
-    monkeypatch.setattr(app, 'load_config', lambda: config)
+    monkeypatch.setattr(app, 'load_config', lambda path: config)
 
     def fail(self):
         raise error
     monkeypatch.setattr(app.Synthesizer, 'run', fail)
-    assert app.main() == 1
+    assert app.main([]) == 1
     assert str(error) in caplog.text
+
+
+def test_list_devices(quiet_main, capsys):
+    assert app.main(['--list-devices']) == 0
+    assert capsys.readouterr().out.startswith('fake device list\n')
+
+
+def test_default_options(quiet_main, captured_config):
+    assert app.main([]) == 0
+    assert quiet_main == [logging.INFO]
+    assert captured_config[0].device is None  # Shipped config.ini: system default
+
+
+def test_debug_option(quiet_main, captured_config):
+    app.main(['--debug'])
+    assert quiet_main == [logging.DEBUG]
+
+
+def test_config_option(quiet_main, captured_config, tmp_path):
+    path = tmp_path / 'other.ini'
+    path.write_text(DEFAULT_CONFIG_PATH.read_text(encoding='utf-8').replace(
+        'SAMPLE_RATE = 48000', 'SAMPLE_RATE = 44100'), encoding='utf-8')
+    app.main(['--config', str(path)])
+    assert captured_config[0].sample_rate == 44100
+
+
+@pytest.mark.parametrize('config_device, option, expected', [
+    ('', ['--device', '3'], 3),
+    ('Speakers', ['--device', 'Headphones'], 'Headphones'),
+    ('Speakers', [], 'Speakers'),
+])
+def test_device_option_overrides_the_config(quiet_main, captured_config, tmp_path,
+                                            config_device, option, expected):
+    path = tmp_path / 'other.ini'
+    path.write_text(DEFAULT_CONFIG_PATH.read_text(encoding='utf-8').replace(
+        'DEVICE =', f'DEVICE = {config_device}'), encoding='utf-8')
+    app.main(['--config', str(path), *option])
+    assert captured_config[0].device == expected
+
+
+def test_unknown_option(quiet_main):
+    with pytest.raises(SystemExit) as exit_info:
+        app.main(['--frobnicate'])
+    assert exit_info.value.code == 2
 
 
 def test_main_lets_bugs_through(quiet_main, monkeypatch, config):
     """Unexpected exceptions keep their traceback"""
-    monkeypatch.setattr(app, 'load_config', lambda: config)
+    monkeypatch.setattr(app, 'load_config', lambda path: config)
 
     def bug(self):
         raise TypeError('a bug')
     monkeypatch.setattr(app.Synthesizer, 'run', bug)
     with pytest.raises(TypeError):
-        app.main()
+        app.main([])
 
 
 def test_invalid_keyboard_config_is_a_config_error(config):

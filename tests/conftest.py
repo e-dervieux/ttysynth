@@ -26,8 +26,8 @@ def controls():
 
 @pytest.fixture
 def audio_config():
-    return AudioConfig(sample_rate=48000, buffer_size=64, channels=2, default_volume=0.5,
-                       tuning_freq=440.0, temperament='equal')
+    return AudioConfig(device=None, sample_rate=48000, buffer_size=64, channels=2,
+                       default_volume=0.5, tuning_freq=440.0, temperament='equal')
 
 
 @pytest.fixture

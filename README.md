@@ -95,7 +95,11 @@ For the best experience, run the synth in a kitty-protocol-capable terminal.
 ## Usage
 
 ```bash
-python main.py
+python main.py                    # with config.ini
+python main.py --list-devices     # list the audio devices and exit
+python main.py --device 2         # output device, by index or (part of its) name
+python main.py --config my.ini    # another configuration file
+python main.py --debug            # also show debug messages in the log panel
 ```
 
 The screen switches to a full-screen interface; your scrollback is restored
@@ -116,8 +120,9 @@ when you quit.
 
 ### Configuration
 
-Edit `config.ini` to change the sample rate, buffer size, tuning frequency
-(A4), temperament, initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
+Edit `config.ini` to change the output device (system default unless set;
+`--device` overrides it), sample rate, buffer size, tuning frequency (A4),
+temperament, initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
 shift and control keys.
 
 With `LAYOUT = custom`, notes are mapped to keys in `custom_layout.ini`:
@@ -154,7 +159,8 @@ that cannot be opened, device lost, crashes...). They cover note names and
 temperaments, layouts and configuration validation, the keyboard input
 parsing, the musical keyboard, the envelope and instruments (including the
 Karplus-Strong pitch), the audio process lifecycle and failure reporting,
-and the application (control actions, Ctrl+C, crashed threads, exit codes).
+the application (control actions, Ctrl+C, crashed threads, exit codes,
+command line options) and the TUI layout at various window sizes.
 
 ### Manual tests
 
@@ -173,4 +179,6 @@ python manual_tests.py 3    # one test (here: a tone on the audio device)
   fallback only works under X11, not Wayland. PortAudio must be installed
   (e.g. `apt install libportaudio2`).
 - Windows: not supported (the terminal handling relies on termios, Unix only).
+- Losing the output device (e.g. unplugging headphones) stops the synthesizer
+  with an error: it does not reconnect, restart it.
 - Recording is not implemented yet.

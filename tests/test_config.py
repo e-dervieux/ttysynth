@@ -21,6 +21,7 @@ def variant(tmp_path, pattern: str, replacement: str) -> str:
 
 def test_shipped_config_loads():
     config = load_config()
+    assert config.audio.device is None  # System default
     assert config.audio.sample_rate > 0 and config.audio.buffer_size > 0
     assert 0 <= config.audio.default_volume <= 1
     assert config.controls.keys() == CONTROLS.keys()
@@ -68,6 +69,11 @@ def test_default_section_not_supported(tmp_path):
 def test_missing_file(tmp_path):
     with pytest.raises(ConfigError, match='Cannot read configuration'):
         load_config(tmp_path / 'missing.ini')
+
+
+@pytest.mark.parametrize('value, device', [('3', 3), ('MacBook Pro', 'MacBook Pro'), ('', None)])
+def test_device(tmp_path, value, device):
+    assert load_config(variant(tmp_path, r'^DEVICE =.*', f'DEVICE = {value}')).audio.device == device
 
 
 def test_option_names_are_case_insensitive(tmp_path):

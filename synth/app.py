@@ -9,15 +9,18 @@ synthesizes sound in its callback. See audio_engine.py for details.
 """
 
 # Global imports
+import argparse
 import logging
 import signal
 import threading
+from dataclasses import replace
+from pathlib import Path
 
 # Local imports
-from synth.config import CONTROLS, Config, load_config
+from synth.config import CONTROLS, DEFAULT_CONFIG_PATH, Config, load_config, parse_device
 from synth.music import MusicEngine, midi_to_note
 from synth.keyboard_handler import KeyboardHandler
-from synth.audio_engine import AudioEngine
+from synth.audio_engine import AudioEngine, list_devices
 from synth.dsp import INSTRUMENTS
 from synth.errors import SynthError
 from synth.logging_setup import setup_logging
@@ -182,14 +185,37 @@ class Synthesizer:
             raise self._thread_error
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """Command line options (argv: sys.argv[1:] if None)"""
+    parser = argparse.ArgumentParser(prog='python main.py',
+                                     description="Python Command Line Audio Synthesizer")
+    parser.add_argument('--config', type=Path, default=DEFAULT_CONFIG_PATH,
+                        help="configuration file (default: config.ini of the project)")
+    parser.add_argument('--device', type=parse_device,
+                        help="output device, by index or (part of its) name; "
+                             "overrides [AUDIO] DEVICE")
+    parser.add_argument('--list-devices', action='store_true',
+                        help="list the audio devices and exit")
+    parser.add_argument('--debug', action='store_true', help="show debug messages")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Main function, returns the process exit code"""
-    setup_logging(logging.INFO)
+    args = parse_args(argv)
+    if args.list_devices:
+        print(list_devices())
+        return 0
+
+    setup_logging(logging.DEBUG if args.debug else logging.INFO)
     log.info("Python Command Line Audio Synthesizer")
     log.info("=====================================")
 
     try:
-        Synthesizer(load_config()).run()
+        config = load_config(args.config)
+        if args.device is not None:
+            config = replace(config, audio=replace(config.audio, device=args.device))
+        Synthesizer(config).run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):
         # a message is enough. Other exceptions are bugs: keep the traceback.

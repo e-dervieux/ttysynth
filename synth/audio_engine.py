@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 import traceback
+from dataclasses import replace
 
 import numpy as np
 import sounddevice as sd
@@ -84,19 +85,20 @@ class _AudioProcess:
     child process (see audio_process_main).
     """
 
-    def __init__(self, command_queue, status_queue, sample_rate, buffer_size, channels, default_volume):
+    def __init__(self, command_queue, status_queue, audio_config: AudioConfig):
         self.command_queue = command_queue
         self.status_queue = status_queue
-        self.sample_rate = sample_rate
-        self.buffer_size = buffer_size
-        self.channels = channels
+        self.device = audio_config.device
+        self.sample_rate = audio_config.sample_rate
+        self.buffer_size = audio_config.buffer_size
+        self.channels = audio_config.channels
 
         # Shared between the command loop and the audio callback. The lock is
         # only ever held for microseconds (list append/comprehension), so the
         # callback is effectively never blocked.
         self.lock = threading.Lock()
         self.notes = []
-        self.volume = default_volume
+        self.volume = audio_config.default_volume
 
         self.xruns = 0
         self.running = True
@@ -153,6 +155,7 @@ class _AudioProcess:
                 log.info(f"Trying latency setting: {latency}")
                 stream = sd.OutputStream(
                     callback=self._audio_callback,
+                    device=self.device,
                     samplerate=self.sample_rate,
                     blocksize=self.buffer_size,
                     channels=self.channels,
@@ -265,9 +268,13 @@ class _AudioProcess:
             stream.close()
 
 
-def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, channels,
-                       default_volume, log_level):
-    """Entry point of the audio process"""
+def list_devices() -> str:
+    """Table of the audio devices, for --list-devices"""
+    return f"{sd.query_devices()}\n(> default input, < default output)"
+
+
+def audio_process_main(command_queue, status_queue, audio_config: AudioConfig, log_level):
+    """Entry point of the audio process (audio_config.device: a device index)"""
     # Records below the main process level are not even sent
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -279,8 +286,7 @@ def audio_process_main(command_queue, status_queue, sample_rate, buffer_size, ch
     # from inside the command queue wait).
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    process = _AudioProcess(command_queue, status_queue, sample_rate,
-                            buffer_size, channels, default_volume)
+    process = _AudioProcess(command_queue, status_queue, audio_config)
     try:
         process.run()
     except Exception:
@@ -305,6 +311,7 @@ class AudioEngine:
         Args:
             audio_config: [AUDIO] settings (see config.py)
         """
+        self.config = audio_config
         self.sample_rate = audio_config.sample_rate
         self.buffer_size = audio_config.buffer_size
         self.channels = audio_config.channels
@@ -422,10 +429,18 @@ class AudioEngine:
         Start audio engine (spawns the audio process).
 
         Raises:
-            SynthError: the audio stream could not be started (the audio
-                        process is stopped)
+            SynthError: no such output device, or the audio stream could
+                        not be started (the audio process is stopped)
             AudioProcessCrash: bug in the audio process
         """
+        # Resolved here, where a wrong device is an expected error, not in
+        # the audio process
+        try:
+            device = sd.query_devices(self.config.device, 'output')
+        except (ValueError, sd.PortAudioError) as e:
+            raise SynthError(f"Output device: {e} (see --list-devices)") from e
+        log.info(f"Output device: {device['name']}")
+
         self.running = True
         self._ready_event.clear()
         self._start_error = None
@@ -433,8 +448,8 @@ class AudioEngine:
         log.info("Starting audio process")
         self.process = mp.Process(
             target=audio_process_main,
-            args=(self.command_queue, self.status_queue, self.sample_rate,
-                  self.buffer_size, self.channels, self.default_volume,
+            args=(self.command_queue, self.status_queue,
+                  replace(self.config, device=device['index']),
                   logging.getLogger().getEffectiveLevel()),
             name='audio-process'
         )
@@ -477,10 +492,4 @@ class AudioEngine:
             self._status_thread = None
 
         log.info("Audio engine stopped")
-
-    def print_device_info(self):
-        """Print available audio devices"""
-        log.info("\nAvailable audio devices:")
-        devices = sd.query_devices()
-        log.info(str(devices))
 

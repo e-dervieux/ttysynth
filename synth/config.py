@@ -39,8 +39,8 @@ CONTROLS = {
 
 # Expected options of each section (configparser lowercases option names)
 _SCHEMA = {
-    'AUDIO': ('sample_rate', 'buffer_size', 'channels', 'default_volume', 'tuning_freq',
-              'temperament'),
+    'AUDIO': ('device', 'sample_rate', 'buffer_size', 'channels', 'default_volume',
+              'tuning_freq', 'temperament'),
     'KEYBOARD': ('layout', 'custom_layout', 'octave_shift'),
     'CONTROLS': tuple(CONTROLS),
 }
@@ -49,6 +49,7 @@ _SCHEMA = {
 @dataclass(frozen=True)
 class AudioConfig:
     """[AUDIO] section"""
+    device: int | str | None  # Output device: index or (part of) name, None: system default
     sample_rate: int       # Hz
     buffer_size: int       # samples
     channels: int
@@ -98,6 +99,16 @@ def _positive(value) -> bool:
     return value > 0
 
 
+def parse_device(value: str) -> int | str | None:
+    """Output device setting ([AUDIO] DEVICE, --device): empty for the
+    system default, else a device index or (part of) a device name. Whether
+    it exists is checked when the audio engine starts."""
+    value = value.strip()
+    if not value:
+        return None
+    return int(value) if value.isdigit() else value
+
+
 def _check_schema(parser: configparser.ConfigParser, path: Path):
     """Every expected section and option present, nothing else"""
     if parser.defaults():
@@ -136,6 +147,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     _check_schema(parser, path)
 
     audio = AudioConfig(
+        device=parse_device(parser['AUDIO']['device']),
         sample_rate=_get(parser, 'AUDIO', 'sample_rate', int, _positive, 'a positive integer'),
         buffer_size=_get(parser, 'AUDIO', 'buffer_size', int, _positive, 'a positive integer'),
         channels=_get(parser, 'AUDIO', 'channels', int, _positive, 'a positive integer'),
