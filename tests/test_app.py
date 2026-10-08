@@ -4,6 +4,7 @@
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from dataclasses import replace
@@ -69,6 +70,24 @@ def test_control_actions(synth):
     synth.running = True
     synth.on_control('quit')
     assert not synth.running
+
+
+def test_notes_and_controls_wake_the_display(synth):
+    synth.on_note('a', 60, True)
+    assert synth.display_changed.is_set()
+    synth.display_changed.clear()
+    synth.on_control('octave_up')
+    assert synth.display_changed.is_set()
+
+
+def test_gil_switch_interval_while_running(synth, headless, monkeypatch):
+    """Short while the synthesizer runs (see GIL_SWITCH_INTERVAL), restored after"""
+    previous = sys.getswitchinterval()
+    during = []
+    monkeypatch.setattr(FakeTUI, 'run', lambda self: during.append(sys.getswitchinterval()))
+    synth.run()
+    assert during == [pytest.approx(app.GIL_SWITCH_INTERVAL)]
+    assert sys.getswitchinterval() == previous
 
 
 def test_repeated_ctrl_c_never_interrupts_the_cleanup(synth, headless, monkeypatch):

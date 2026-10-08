@@ -3,6 +3,8 @@ Rendered off-screen, on a rich console of a given size."""
 
 import io
 import logging
+import threading
+import time
 import types
 
 import pytest
@@ -79,9 +81,56 @@ def test_recording_is_shown(synth):
 
 
 def test_held_keys_are_highlighted(synth):
-    note_cells = tui.SynthTUI(synth)._render_keymap().renderable.renderables[0].renderables
-    assert [cell.plain for cell in note_cells if cell.style == "reverse"] == \
+    assert [cell.plain for cell in tui.SynthTUI(synth)._note_cells() if cell.style == "reverse"] == \
            ['a -> C4', 'd -> E4', 'g -> G4']
+
+
+def test_columns():
+    cells = [Text("a" * length) for length in (3, 5, 4, 5, 1)]  # 5 cells wide, 2 apart
+    assert tui._columns(cells, 19).plain.splitlines() == [
+        "aaa    aaaaa  aaaa ", "aaaaa  a    "]
+    assert len(tui._columns(cells, 4).plain.splitlines()) == 5  # Narrower than a cell: one per row
+
+
+class FakeLive:
+    """Stands in for rich's Live: records the time of each frame"""
+    frames = None
+
+    def __init__(self, **kwargs):
+        self.console = Console(width=100, height=30, file=io.StringIO())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        pass
+
+    def update(self, renderable, refresh):
+        FakeLive.frames.append(time.monotonic())
+
+
+def test_refresh_is_immediate_on_change_and_slow_when_idle(synth, monkeypatch):
+    FakeLive.frames = []
+    monkeypatch.setattr(tui, 'Live', FakeLive)
+    synth.keyboard_handler.backend.on_alt_screen_enter = lambda: None
+    synth.keyboard_handler.backend.on_alt_screen_exit = lambda: None
+    synth.running = True
+    thread = threading.Thread(target=tui.SynthTUI(synth).run)
+    thread.start()
+    try:
+        time.sleep(1.0)
+        idle_frames = len(FakeLive.frames)
+        pressed = time.monotonic()
+        synth.on_note('a', 60, True)
+        time.sleep(0.1)
+        drawn = [frame for frame in FakeLive.frames if frame > pressed]
+    finally:
+        synth.running = False
+        synth.display_changed.set()
+        thread.join(timeout=2)
+    assert 3 <= idle_frames <= 6                    # 4 Hz (plus the first frame)
+    assert drawn and drawn[0] - pressed < 0.05      # Not at the next idle refresh
+    assert not thread.is_alive()
 
 
 def test_flow_never_splits_a_field():

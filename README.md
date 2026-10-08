@@ -175,6 +175,7 @@ in your terminal) is in an interactive menu:
 ```bash
 python manual_tests.py      # menu
 python manual_tests.py 3    # one test (here: a tone on the audio device)
+python manual_tests.py 7    # note-on latency while the TUI renders
 ```
 
 ## Known limitations

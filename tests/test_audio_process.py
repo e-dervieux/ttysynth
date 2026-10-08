@@ -139,6 +139,16 @@ def test_failures_after_start_are_reported(engine, monkeypatch, mode, error, mes
     assert isinstance(crashes[0], error) and message in str(crashes[0])
 
 
+def test_commands_after_the_audio_process_died_do_not_fail(engine, monkeypatch):
+    """Its death is reported by the status reader, not by the next note"""
+    monkeypatch.setenv('FAKE_SD', 'killed')
+    with thread_crashes() as crashes:
+        engine.start()
+        assert wait_for(lambda: crashes)
+        engine.play_note('a', 440.0, 'flute')
+        engine.stop_note('a')
+
+
 def test_unknown_instrument_is_a_crash(engine):
     with thread_crashes() as crashes:
         engine.start()

@@ -12,6 +12,7 @@ synthesizes sound in its callback. See audio_engine.py for details.
 import argparse
 import logging
 import signal
+import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -31,6 +32,15 @@ log = logging.getLogger(__name__)
 # Volume change of one press of the volume keys
 VOLUME_STEP = 0.05
 
+# Maximum wait of a thread for the GIL held by another one, in this process
+# (sys.setswitchinterval, default 5 ms). A note goes from the input thread to
+# the audio process; while the TUI renders (pure Python), each GIL handoff on
+# that way could wait the whole interval: notes started up to ~17 ms late.
+# With 0.2 ms, measured under 1 ms. No cost unless two threads compete (they
+# then take turns more often, a few us each); the audio process keeps its own
+# setting.
+GIL_SWITCH_INTERVAL = 0.0002
+
 
 class Synthesizer:
     """Main synthesizer class that coordinates all components"""
@@ -40,6 +50,9 @@ class Synthesizer:
         keyboard configuration)"""
         self.running = False
         self._thread_error = None  # First exception of a crashed background thread
+        # Set when the display changed (key, control): the TUI draws it at
+        # once instead of at its next idle refresh
+        self.display_changed = threading.Event()
 
         self.music_engine = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
         self.audio_engine = AudioEngine(config.audio)
@@ -81,10 +94,12 @@ class Synthesizer:
         else:
             self.audio_engine.stop_note(key)
             log.debug(f"♫ {key} -> {midi_to_note(midi)} (off)")
+        self.display_changed.set()
 
     def on_control(self, name: str):
         """A control key was pressed"""
         self.actions[name]()
+        self.display_changed.set()
 
     def next_instrument(self):
         """Cycle to the next instrument"""
@@ -161,11 +176,14 @@ class Synthesizer:
         previous_sigint = signal.signal(signal.SIGINT, self._on_sigint)
         previous_hook = threading.excepthook
         threading.excepthook = self._on_thread_crash
+        previous_switch_interval = sys.getswitchinterval()
+        sys.setswitchinterval(GIL_SWITCH_INTERVAL)
         try:
             self.start()
             SynthTUI(self).run()
         finally:
             self.stop()
+            sys.setswitchinterval(previous_switch_interval)
             threading.excepthook = previous_hook
             signal.signal(signal.SIGINT, previous_sigint)
 

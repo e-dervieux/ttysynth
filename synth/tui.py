@@ -3,8 +3,11 @@ htop-like terminal user interface using rich.
 
 The TUI runs in the main (UI) process and renders on the terminal's alternate
 screen buffer (like htop: the normal scrollback is restored on exit). It is
-refreshed at ~10 Hz; thanks to the two-process architecture, rendering time
-can never delay the audio callback (separate interpreter, separate GIL).
+redrawn as soon as the display changes (key pressed or released, control),
+at most FRAME_RATE times per second, and otherwise at IDLE_RATE (audio
+status, logs). Thanks to the two-process architecture, rendering time can
+never delay the audio callback (separate interpreter, separate GIL); within
+this process, see app.GIL_SWITCH_INTERVAL.
 
 Each frame is laid out for the current terminal size: the status and keys
 panels take the height their content needs at this width, the log panel the
@@ -18,7 +21,6 @@ logging_setup.py); their console output is paused while the TUI is shown.
 import time
 
 from rich.align import Align
-from rich.columns import Columns
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
@@ -30,7 +32,8 @@ from synth.config import CONTROLS
 from synth.logging_setup import console_paused, format_record, log_history
 from synth.music import midi_to_note
 
-REFRESH_PERIOD = 0.1  # seconds between renders (~10 Hz)
+FRAME_RATE = 30  # Hz, maximum: changes within a frame are drawn together
+IDLE_RATE = 4    # Hz, when nothing is played
 
 # Minimum terminal width, and minimum number of log lines shown: below
 # either, the window is too small
@@ -38,6 +41,7 @@ MIN_WIDTH = 70
 MIN_LOG_LINES = 3
 
 FIELD_SEPARATOR = "   "
+CELL_SEPARATOR = "  "
 PANEL_FRAME = 4  # columns taken by a panel's borders and padding
 
 
@@ -54,6 +58,20 @@ def _flow(fields: list, width: int) -> Text:
         else:
             lines.append(field.copy())
     return Text("\n").join(lines)
+
+
+def _columns(cells: list, width: int) -> Text:
+    """Cells in as many equal-width columns as fit in `width`, row by row
+    (much cheaper than rich's Columns, which measures every cell again and
+    again to find the best layout)"""
+    cell_width = max(cell.cell_len for cell in cells)
+    count = max(1, (width + len(CELL_SEPARATOR)) // (cell_width + len(CELL_SEPARATOR)))
+    rows = []
+    for start in range(0, len(cells), count):
+        row = Text(CELL_SEPARATOR).join(
+            Text.assemble(cell, " " * (cell_width - cell.cell_len)) for cell in cells[start:start + count])
+        rows.append(row)
+    return Text("\n").join(rows)
 
 
 def _field(name: str, value, style: str = "") -> Text:
@@ -114,24 +132,27 @@ class SynthTUI:
         body.append_text(_field("notes", " ".join(notes) if notes else "-", "magenta"))
         return Panel(body, title="Python Command Line Audio Synthesizer", border_style="blue")
 
-    def _render_keymap(self) -> Panel:
-        """Middle panel: note keys (held ones highlighted) and control keys,
-        in as many columns as the width allows"""
+    def _note_cells(self) -> list:
+        """'key -> note' cells, sorted by pitch (custom layout files may list
+        notes in any order), held keys highlighted"""
         handler = self.synth.keyboard_handler
         held = handler.get_pressed_keys()
-
-        # Sorted by pitch: custom layout files may list notes in any order
         notes = sorted(((key, handler.note_for_key(key)) for key in handler.key_to_midi),
                        key=lambda item: item[1])
-        note_cells = [Text.assemble((key, "bold cyan"), " -> ", (midi_to_note(midi), "magenta"),
-                                    style="reverse" if key in held else "")
-                      for key, midi in notes]
+        return [Text.assemble((key, "bold cyan"), " -> ", (midi_to_note(midi), "magenta"),
+                              style="reverse" if key in held else "")
+                for key, midi in notes]
+
+    def _render_keymap(self, width: int) -> Panel:
+        """Middle panel: note keys and control keys, in as many columns as
+        the width allows"""
+        handler = self.synth.keyboard_handler
         control_cells = [Text.assemble((handler.control_keys[name], "bold cyan"), f" {label}")
                          for name, label in CONTROLS.items()]
-
-        return Panel(Group(Columns(note_cells, padding=(0, 2), equal=True),
+        inner_width = width - PANEL_FRAME
+        return Panel(Group(_columns(self._note_cells(), inner_width),
                            Text(),  # spacer
-                           Columns(control_cells, padding=(0, 2), equal=True)),
+                           _columns(control_cells, inner_width)),
                      title="Keys", border_style="blue")
 
     def _render_logs(self, console: Console, width: int, height: int) -> Panel:
@@ -150,7 +171,7 @@ class SynthTUI:
             return self._render_too_small(width, height, f"{MIN_WIDTH} columns")
 
         status = self._render_status(width)
-        keymap = self._render_keymap()
+        keymap = self._render_keymap(width)
         top_height = _height(console, status, width) + _height(console, keymap, width)
         needed_height = top_height + 2 + MIN_LOG_LINES
         if height < needed_height:
@@ -177,9 +198,14 @@ class SynthTUI:
                 # the main and alternate screens: re-enable now that Live has
                 # switched to the alternate screen, and disable before leaving.
                 self.synth.keyboard_handler.on_alt_screen_enter()
+                changed = self.synth.display_changed
                 try:
                     while self.synth.running:
+                        changed.clear()  # Changes from now on: next frame
                         live.update(self._render(live.console), refresh=True)
-                        time.sleep(REFRESH_PERIOD)
+                        # Frame rate cap, then wait for a change (drawn at
+                        # once) or the next idle refresh
+                        time.sleep(1 / FRAME_RATE)
+                        changed.wait(1 / IDLE_RATE - 1 / FRAME_RATE)
                 finally:
                     self.synth.keyboard_handler.on_alt_screen_exit()

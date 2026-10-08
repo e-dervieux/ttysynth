@@ -5,20 +5,27 @@ The automated tests are in tests/ (run with pytest, see README.md).
 """
 
 # Global imports
+import io
 import logging
+import random
+import re
 import sys
 import threading
 import time
+import types
 
 import numpy as np
 import sounddevice as sd
+from rich.console import Console
 
 # Local imports
 from synth.music import MusicEngine, midi_to_note, note_to_midi
 from synth.keyboard_handler import KeyboardHandler
 from synth.audio_engine import AudioEngine, list_devices
+from synth.app import GIL_SWITCH_INTERVAL, Synthesizer
 from synth.config import load_config
-from synth.logging_setup import setup_logging
+from synth.logging_setup import console_paused, setup_logging
+from synth.tui import SynthTUI
 
 def test_basic_audio(duration=2.0, frequency=440.0):
     """Test basic audio playback"""
@@ -280,6 +287,69 @@ def test_full_integration():
         print(f"❌ Integration test failed: {e}")
         return False
 
+def test_note_latency(notes=300):
+    """Test 7: note-on latency while the TUI renders"""
+    print("=" * 50)
+    print("TEST 7: Note-on latency while the TUI renders")
+    print("=" * 50)
+    print("Delay from a note key (main process) to the note starting in the audio")
+    print("process, while the TUI renders nonstop (off-screen): with Python's")
+    print(f"default GIL switch interval, then with the synthesizer's ({GIL_SWITCH_INTERVAL * 1000} ms).")
+
+    started = {}  # Key name -> time the audio process started its note
+
+    class NoteStarts(logging.Handler):
+        def emit(self, record):
+            match = re.match(r"Audio process: note (\S+) started", record.getMessage())
+            if match:
+                started[match.group(1)] = record.created  # time.time() in the audio process
+
+    synth = Synthesizer(load_config())
+    synth.keyboard_handler.backend = types.SimpleNamespace(status='OK')
+    tui = SynthTUI(synth)
+    console = Console(width=120, height=40, file=io.StringIO(), force_terminal=True)
+    handler = NoteStarts()
+    logging.getLogger().addHandler(handler)
+    default_interval = sys.getswitchinterval()
+    try:
+        with console_paused():  # 2 x 300 notes of debug logs
+            synth.audio_engine.start()
+            for interval in (default_interval, GIL_SWITCH_INTERVAL):
+                sys.setswitchinterval(interval)
+                started.clear()
+                sent = {}
+                done = threading.Event()
+
+                def play():
+                    """Like the keyboard input thread"""
+                    for i in range(notes):
+                        time.sleep(random.uniform(0.005, 0.03))
+                        key = f"k{i}"
+                        sent[key] = time.time()
+                        synth.on_note(key, 60, True)
+                        synth.on_note(key, 60, False)
+                    time.sleep(0.5)  # Last notes reach the audio process
+                    done.set()
+
+                player = threading.Thread(target=play)
+                player.start()
+                while not done.is_set():
+                    console.print(tui._render(console))
+                player.join()
+
+                delays = np.array([started[key] - sent[key] for key in sent if key in started]) * 1000
+                print(f"  switch interval {interval * 1000:3.1f} ms: median {np.median(delays):5.2f} ms, "
+                      f"p99 {np.percentile(delays, 99):5.2f} ms, max {delays.max():5.2f} ms "
+                      f"({len(delays)}/{notes} notes)")
+    finally:
+        sys.setswitchinterval(default_interval)
+        logging.getLogger().removeHandler(handler)
+        synth.audio_engine.stop()
+
+    print("With the synthesizer's interval, p99 and max should stay under about 1 ms.")
+    return True
+
+
 def run_all_tests():
     """Run all tests"""
     print("🧪 SYNTHESIZER MANUAL TESTS")
@@ -292,6 +362,7 @@ def run_all_tests():
         ("Streaming Audio", test_audio_streaming),
         ("Audio Engine", test_audio_engine),
         ("Full Integration", test_full_integration),
+        ("Note-on Latency", test_note_latency),
     ]
     
     results = []
@@ -343,6 +414,7 @@ def main():
             '4': ("Streaming Audio", test_audio_streaming),
             '5': ("Audio Engine", test_audio_engine),
             '6': ("Full Integration", test_full_integration),
+            '7': ("Note-on Latency", test_note_latency),
         }
         
         if test_num in test_map:
@@ -366,6 +438,7 @@ def main():
         print("  4: Streaming Audio Test")
         print("  5: Audio Engine Test")
         print("  6: Full Integration Test")
+        print("  7: Note-on Latency Test")
         print("  a: Run All Tests")
         print("  q: Quit")
         
@@ -378,7 +451,7 @@ def main():
             elif choice == 'a':
                 success = run_all_tests()
                 return 0 if success else 1
-            elif choice in '123456':
+            elif choice in '1234567':
                 test_map = {
                     '1': test_music_engine,
                     '2': test_keyboard_handler,
@@ -386,6 +459,7 @@ def main():
                     '4': test_audio_streaming,
                     '5': test_audio_engine,
                     '6': test_full_integration,
+                    '7': test_note_latency,
                 }
                 result = test_map[choice]()
                 print(f"\nTest {'PASSED' if result else 'FAILED'}")

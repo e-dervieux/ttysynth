@@ -5,7 +5,7 @@ Architecture (hybrid two-process design):
 
 - The AudioEngine class lives in the main (UI) process. It never touches
   audio data: it only sends small command messages ('PLAY_NOTE', 'STOP_NOTE',
-  'SET_VOLUME', 'STOP') through a multiprocessing queue.
+  'SET_VOLUME', 'STOP'...) through a pipe.
 - The audio process owns the PortAudio stream and synthesizes the audio
   directly inside the stream callback. Its GIL is shared only with a
   near-idle command thread, so UI work (keyboard handling, TUI rendering)
@@ -152,8 +152,8 @@ class _AudioProcess:
     child process (see audio_process_main).
     """
 
-    def __init__(self, command_queue, status_queue, audio_config: AudioConfig):
-        self.command_queue = command_queue
+    def __init__(self, commands, status_queue, audio_config: AudioConfig):
+        self.commands = commands  # Receiving end of the command pipe
         self.status_queue = status_queue
         self.device = audio_config.device
         self.sample_rate = audio_config.sample_rate
@@ -344,13 +344,10 @@ class _AudioProcess:
 
         try:
             while self.running:
-                # Blocking get with timeout: commands are applied with sub-ms
+                # Blocking wait with timeout: commands are applied with sub-ms
                 # latency, and the timeout paces the periodic status reports.
-                try:
-                    command = self.command_queue.get(timeout=STATUS_PERIOD)
-                    self._handle_command(command)
-                except queue.Empty:
-                    pass
+                if self.commands.poll(STATUS_PERIOD):
+                    self._handle_command(self.commands.recv())
 
                 now = time.monotonic()
                 if now - last_status_time >= STATUS_PERIOD:
@@ -379,7 +376,7 @@ def list_devices() -> str:
     return f"{sd.query_devices()}\n(> default input, < default output)"
 
 
-def audio_process_main(command_queue, status_queue, audio_config: AudioConfig, log_level):
+def audio_process_main(commands, status_queue, audio_config: AudioConfig, log_level):
     """Entry point of the audio process (audio_config.device: a device index)"""
     # Records below the main process level are not even sent
     root_logger = logging.getLogger()
@@ -392,7 +389,7 @@ def audio_process_main(command_queue, status_queue, audio_config: AudioConfig, l
     # from inside the command queue wait).
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    process = _AudioProcess(command_queue, status_queue, audio_config)
+    process = _AudioProcess(commands, status_queue, audio_config)
     try:
         process.run()
     except Exception:
@@ -426,8 +423,15 @@ class AudioEngine:
         self.default_volume = audio_config.default_volume
         self.volume = self.default_volume
 
-        # Multiprocessing communication
-        self.command_queue = mp.Queue()
+        # Multiprocessing communication. Commands go through a pipe rather
+        # than a multiprocessing queue: send() writes from the calling thread,
+        # where a queue hands the message to a feeder thread, i.e. one more
+        # wait for the GIL on the way of every note (see app.py,
+        # GIL_SWITCH_INTERVAL). The receiving end is kept open here too:
+        # commands sent after the audio process died then do not fail (its
+        # death is reported by the status reader).
+        self._command_receiver, self._command_sender = mp.Pipe(duplex=False)
+        self._command_lock = threading.Lock()  # send() is called from several threads
         self.status_queue = mp.Queue()
         self.process = None
         self.running = False
@@ -441,12 +445,17 @@ class AudioEngine:
         log.info(f"Audio engine initialized: {self.sample_rate}Hz, {self.buffer_size} samples, "
                  f"{self.channels} channel(s)")
 
+    def _send(self, command: tuple):
+        """Send a command to the audio process"""
+        with self._command_lock:
+            self._command_sender.send(command)
+
     def set_volume(self, volume: float):
         """Set master volume, clamped to 0.0 - 1.0 (the single place where
         it is)"""
         self.volume = max(0.0, min(1.0, volume))
         if self.running:
-            self.command_queue.put(('SET_VOLUME', self.volume))
+            self._send(('SET_VOLUME', self.volume))
         log.info(f"🔊 Volume: {self.volume * 100:.0f}%")
 
     def change_volume(self, delta: float):
@@ -471,7 +480,7 @@ class AudioEngine:
             instrument_type: Type of instrument to use (default: 'flute')
         """
         if self.running:
-            self.command_queue.put(('PLAY_NOTE', key, frequency, instrument_type))
+            self._send(('PLAY_NOTE', key, frequency, instrument_type))
 
     def stop_note(self, key: str):
         """
@@ -481,19 +490,19 @@ class AudioEngine:
             key: Key identifier of note to release
         """
         if self.running:
-            self.command_queue.put(('STOP_NOTE', key))
+            self._send(('STOP_NOTE', key))
 
     def start_recording(self):
         """Start recording the output to a new file of the recording
         directory, named after the current time"""
         if self.running:
             path = self.config.record_dir / f"{datetime.now():%Y-%m-%d_%H-%M-%S}.flac"
-            self.command_queue.put(('RECORD_START', path))
+            self._send(('RECORD_START', path))
 
     def stop_recording(self):
         """Stop recording (the file is finalized)"""
         if self.running:
-            self.command_queue.put(('RECORD_STOP',))
+            self._send(('RECORD_STOP',))
 
     def _status_reader(self, process: mp.Process):
         """
@@ -566,7 +575,7 @@ class AudioEngine:
         log.info("Starting audio process")
         self.process = mp.Process(
             target=audio_process_main,
-            args=(self.command_queue, self.status_queue,
+            args=(self._command_receiver, self.status_queue,
                   replace(self.config, device=device['index']),
                   logging.getLogger().getEffectiveLevel()),
             name='audio-process'
@@ -597,7 +606,7 @@ class AudioEngine:
 
         if self.process is not None and self.process.is_alive():
             log.info("Stopping audio process")
-            self.command_queue.put(('STOP',))
+            self._send(('STOP',))
             self.process.join(timeout=2.0)
             if self.process.is_alive():
                 log.warning("Force terminating audio process")
