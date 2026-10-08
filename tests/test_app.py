@@ -10,14 +10,9 @@ from dataclasses import replace
 import pytest
 
 import synth.app as app
-from synth.config import CONTROLS, Config
+from synth.config import CONTROLS
 from synth.errors import ConfigError, SynthError
 from synth.keyboard_handler import KeyboardHandler
-
-
-@pytest.fixture
-def config(audio_config, keyboard_config, controls):
-    return Config(audio=audio_config, keyboard=keyboard_config, controls=controls)
 
 
 @pytest.fixture

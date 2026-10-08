@@ -17,7 +17,10 @@ with an htop-like full-screen terminal interface.
   (see `synth/music.py` for how each distributes the Pythagorean comma)
 - Full-screen TUI (alternate screen buffer, like htop) showing sample rate,
   buffer size, output latency (as reported by PortAudio), xrun count, volume,
-  active notes and a scrolling log panel
+  held notes (also highlighted in the key map) and a scrolling log panel. It
+  adapts to the window size; the minimum depends on the width and the layout
+  (70×22 for the built-in layouts at 70 columns), and a smaller window shows
+  the size needed
 - Everything configurable through `config.ini` (keyboard layout, tuning,
   temperament, control keys)
 
