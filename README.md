@@ -101,6 +101,7 @@ For the best experience, run the synth in a kitty-protocol-capable terminal.
 python main.py                    # with config.ini
 python main.py --list-devices     # list the audio devices and exit
 python main.py --device 2         # output device, by index or (part of its) name
+python main.py --min-latency      # lowest output latency the device accepts (see below)
 python main.py --config my.ini    # another configuration file
 python main.py --record-dir ~/takes  # where recordings go
 python main.py --debug            # also show debug messages in the log panel
@@ -108,6 +109,24 @@ python main.py --debug            # also show debug messages in the log panel
 
 The screen switches to a full-screen interface; your scrollback is restored
 when you quit.
+
+### Latency
+
+The `latency` field of the status bar is the output latency reported by the
+audio device; the synthesizer itself adds about 2 to 3 ms (64-sample buffer,
+key handling). Most of it depends on the output:
+
+- built-in MacBook speakers: about 19 ms, whatever the settings (macOS
+  processes their sound before playing it)
+- wired headphones, USB audio interfaces: much lower (a few ms for an
+  interface)
+- Bluetooth headphones: 150 ms or more, unusable for playing
+
+By default, the stream uses the device's default low latency.
+`--min-latency` requests the lowest one the device accepts instead (e.g.
+1.3 ms instead of 2.7 ms on some devices; no change on the built-in
+speakers): less delay, but less margin against dropouts. Watch the `xruns`
+count of the status bar. If the device refuses it, the default is used.
 
 ### Default controls (see `config.ini`)
 

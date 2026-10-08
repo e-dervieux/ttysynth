@@ -209,6 +209,12 @@ def test_device_option_overrides_the_config(quiet_main, captured_config, tmp_pat
     assert captured_config[0].device == expected
 
 
+def test_min_latency_option(quiet_main, captured_config):
+    app.main([])
+    app.main(['--min-latency'])
+    assert [audio.min_latency for audio in captured_config] == [False, True]
+
+
 def test_record_dir_option_overrides_the_config(quiet_main, captured_config, tmp_path):
     app.main(['--record-dir', str(tmp_path / 'takes')])
     assert captured_config[0].record_dir == tmp_path / 'takes'

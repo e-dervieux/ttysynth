@@ -159,6 +159,7 @@ class _AudioProcess:
         self.sample_rate = audio_config.sample_rate
         self.buffer_size = audio_config.buffer_size
         self.channels = audio_config.channels
+        self.min_latency = audio_config.min_latency
 
         # Shared between the command loop and the audio callback. The lock
         # guards the note list; it is only ever held for microseconds (list
@@ -220,14 +221,22 @@ class _AudioProcess:
         latency, which a few devices require (some ALSA / USB ones). Other
         failures (device busy, unsupported settings...) fail both alike.
         (latency=None would mean the sounddevice default: 'high' again.)
+
+        With --min-latency, the lowest latency the device accepts is tried
+        first: 0, which PortAudio raises to the device minimum. 'low' is the
+        device's *default* low latency, often higher (e.g. 2.7 ms instead of
+        1.3 ms), with more margin against xruns.
         """
         latency_options = ['low', 'high']
+        if self.min_latency:
+            latency_options.insert(0, 0.0)
         last_error = None
 
         for latency in latency_options:
+            name = 'minimum' if latency == 0.0 else latency
             stream = None
             try:
-                log.info(f"Trying latency setting: {latency}")
+                log.info(f"Trying latency setting: {name}")
                 stream = sd.OutputStream(
                     callback=self._audio_callback,
                     device=self.device,
@@ -238,13 +247,13 @@ class _AudioProcess:
                     latency=latency
                 )
                 stream.start()
-                log.info(f"Audio stream started with latency={latency} "
+                log.info(f"Audio stream started with latency={name} "
                          f"(reported: {stream.latency * 1000:.1f} ms)")
                 return stream
 
             except sd.PortAudioError as e:
                 last_error = e
-                log.warning(f"Failed with latency={latency}: {e}")
+                log.warning(f"Failed with latency={name}: {e}")
                 if stream is not None:
                     stream.close()
 

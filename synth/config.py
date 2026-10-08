@@ -57,6 +57,7 @@ class AudioConfig:
     tuning_freq: float     # Hz, frequency of A4
     temperament: str       # One of music.TEMPERAMENTS
     record_dir: Path       # Directory of the recordings, resolved relative to config.ini
+    min_latency: bool      # Lowest output latency the device accepts (--min-latency only)
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
                          expected=f"one of {', '.join(TEMPERAMENTS)}"),
         record_dir=path.parent / _get(parser, 'AUDIO', 'record_dir', valid=bool,
                                       expected='a directory'),
+        min_latency=False,  # Command line option only
     )
 
     keyboard = KeyboardConfig(

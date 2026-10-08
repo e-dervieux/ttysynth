@@ -200,6 +200,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument('--device', type=parse_device,
                         help="output device, by index or (part of its) name; "
                              "overrides [AUDIO] DEVICE")
+    parser.add_argument('--min-latency', action='store_true',
+                        help="request the lowest output latency the device accepts, instead "
+                             "of its default low latency: less delay, but less margin "
+                             "against xruns (dropouts), check their count in the status bar")
     parser.add_argument('--record-dir', type=Path,
                         help="directory of the recordings; overrides [AUDIO] RECORD_DIR")
     parser.add_argument('--list-devices', action='store_true',
@@ -225,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, audio=replace(config.audio, device=args.device))
         if args.record_dir is not None:
             config = replace(config, audio=replace(config.audio, record_dir=args.record_dir))
+        if args.min_latency:
+            config = replace(config, audio=replace(config.audio, min_latency=True))
         Synthesizer(config).run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):

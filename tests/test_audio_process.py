@@ -111,6 +111,23 @@ def test_output_stage(audio_config, volume):
         assert outdata[:, 0] == pytest.approx(expected) and outdata[:, 1] == pytest.approx(expected)
 
 
+@pytest.mark.parametrize('min_latency, mode, logs', [
+    (False, '', ['Audio stream started with latency=low']),
+    (True, '', ['Audio stream started with latency=minimum']),
+    (True, 'no-min-latency', ['Failed with latency=minimum', 'Audio stream started with latency=low']),
+])
+def test_latency_settings(audio_config, monkeypatch, caplog, min_latency, mode, logs):
+    monkeypatch.setenv('FAKE_SD', mode)
+    caplog.set_level(logging.INFO)
+    engine = AudioEngine(replace(audio_config, min_latency=min_latency))
+    try:
+        engine.start()
+    finally:
+        engine.stop()
+    for line in logs:
+        assert line in caplog.text
+
+
 def test_stream_cannot_be_opened(engine, monkeypatch):
     monkeypatch.setenv('FAKE_SD', 'open-fail')
     with pytest.raises(SynthError, match='Could not create audio stream'):

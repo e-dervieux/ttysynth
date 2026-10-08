@@ -7,6 +7,7 @@ along). The FAKE_SD environment variable, read when a stream is created,
 selects a failure to simulate:
 
     open-fail      opening the stream fails (PortAudioError)
+    no-min-latency opening fails with the minimum latency (0) only
     early-death    the audio process dies before the stream is ready
     callback-bug   the audio callback receives an invalid buffer after 0.3 s
     device-lost    the stream stops by itself after 0.3 s (device unplugged)
@@ -55,6 +56,8 @@ class OutputStream:
         self.mode = os.environ.get('FAKE_SD', '')
         if self.mode == 'open-fail':
             raise PortAudioError('Error opening OutputStream: Invalid sample rate [PaErrorCode -9997]')
+        if self.mode == 'no-min-latency' and latency == 0.0:
+            raise PortAudioError('Error opening OutputStream: Unanticipated host error [PaErrorCode -9999]')
         if self.mode == 'early-death':
             os._exit(3)
         assert device == FAKE_DEVICE['index'], device
