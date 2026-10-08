@@ -4,14 +4,18 @@ fake sounddevice module (tests/fakes) simulates the audio device and its
 failures (FAKE_SD environment variable)."""
 
 import logging
+import queue
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import replace
 
+import numpy as np
 import pytest
+import soundfile as sf
 
-from synth.audio_engine import AudioEngine, AudioProcessCrash
+from synth.audio_engine import (RECORDING_ERRORS, AudioEngine, AudioProcessCrash, _AudioProcess,
+                                _Recorder)
 from synth.errors import SynthError
 
 
@@ -123,3 +127,87 @@ def test_unknown_instrument_is_a_crash(engine):
         engine.play_note('a', 440.0, 'violin')
         assert wait_for(lambda: crashes)
     assert isinstance(crashes[0], AudioProcessCrash) and "KeyError: 'violin'" in str(crashes[0])
+
+
+# ----------------------------------------------------------------------
+# Recording
+# ----------------------------------------------------------------------
+
+def recording_duration(engine) -> float:
+    return engine.get_status().get('recording') or 0.0
+
+
+def test_recording(engine, audio_config, caplog):
+    caplog.set_level(logging.INFO)
+    engine.start()
+    engine.start_recording()
+    engine.play_note('a', 440.0, 'flute')
+    assert wait_for(lambda: recording_duration(engine) >= 0.3)
+    engine.stop_recording()
+    assert wait_for(lambda: 'Recording saved' in caplog.text)
+    assert wait_for(lambda: engine.get_status()['recording'] is None)
+
+    [path] = audio_config.record_dir.glob('*.flac')
+    info = sf.info(path)
+    assert (info.format, info.subtype, info.samplerate, info.channels) == ('FLAC', 'PCM_24', 48000, 2)
+    data, _ = sf.read(path)
+    assert len(data) >= 0.3 * 48000 and np.max(np.abs(data)) > 0.01  # The note is in it
+
+
+def test_quitting_while_recording_finalizes_the_file(engine, audio_config):
+    engine.start()
+    engine.start_recording()
+    assert wait_for(lambda: recording_duration(engine) >= 0.1)
+    engine.stop()
+    [path] = audio_config.record_dir.glob('*.flac')
+    assert sf.info(path).frames >= 0.1 * 48000
+
+
+def test_start_and_stop_twice(engine, caplog):
+    caplog.set_level(logging.INFO)
+    engine.start()
+    engine.stop_recording()
+    engine.start_recording()
+    engine.start_recording()
+    engine.stop()
+    assert 'Not recording' in caplog.text and 'Already recording' in caplog.text
+    assert caplog.text.count('Recording saved') == 1
+
+
+def test_recording_directory_cannot_be_created(audio_config, tmp_path, caplog):
+    """Reported; the synthesizer keeps playing"""
+    (tmp_path / 'file').write_text('')
+    engine = AudioEngine(replace(audio_config, record_dir=tmp_path / 'file' / 'recordings'))
+    try:
+        engine.start()
+        engine.start_recording()
+        assert wait_for(lambda: 'Cannot record' in caplog.text)
+        engine.play_note('a', 440.0, 'flute')
+        assert wait_for(lambda: engine.get_status().get('voices') == 1)
+    finally:
+        engine.stop()
+
+
+def test_existing_file_is_never_overwritten(tmp_path):
+    path = tmp_path / 'take.flac'
+    path.write_text('precious')
+    with pytest.raises(RECORDING_ERRORS):
+        _Recorder(path, 48000, 2)
+    assert path.read_text() == 'precious'
+
+
+def disk_full(data):
+    raise OSError(28, 'No space left on device')
+
+
+def test_write_failure_stops_the_recording_only(audio_config, caplog):
+    """In-process audio process: the failure is logged, the callback goes on"""
+    process = _AudioProcess(queue.Queue(), queue.Queue(), audio_config)
+    process._start_recording(audio_config.record_dir / 'take.flac')
+    process.recorder.file.write = disk_full
+    process._audio_callback(np.zeros((64, 2), np.float32), 64, None, None)
+    process._stop_recording()
+    assert process.recorder is None
+    assert 'take.flac may be incomplete: [Errno 28] No space left on device' in caplog.text
+    process._audio_callback(np.zeros((64, 2), np.float32), 64, None, None)
+    assert process.callback_error is None

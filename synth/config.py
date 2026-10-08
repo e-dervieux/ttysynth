@@ -40,7 +40,7 @@ CONTROLS = {
 # Expected options of each section (configparser lowercases option names)
 _SCHEMA = {
     'AUDIO': ('device', 'sample_rate', 'buffer_size', 'channels', 'default_volume',
-              'tuning_freq', 'temperament'),
+              'tuning_freq', 'temperament', 'record_dir'),
     'KEYBOARD': ('layout', 'custom_layout', 'octave_shift'),
     'CONTROLS': tuple(CONTROLS),
 }
@@ -56,6 +56,7 @@ class AudioConfig:
     default_volume: float  # 0.0 to 1.0
     tuning_freq: float     # Hz, frequency of A4
     temperament: str       # One of music.TEMPERAMENTS
+    record_dir: Path       # Directory of the recordings, resolved relative to config.ini
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         tuning_freq=_get(parser, 'AUDIO', 'tuning_freq', float, _positive, 'a positive number'),
         temperament=_get(parser, 'AUDIO', 'temperament', valid=lambda v: v in TEMPERAMENTS,
                          expected=f"one of {', '.join(TEMPERAMENTS)}"),
+        record_dir=path.parent / _get(parser, 'AUDIO', 'record_dir', valid=bool,
+                                      expected='a directory'),
     )
 
     keyboard = KeyboardConfig(

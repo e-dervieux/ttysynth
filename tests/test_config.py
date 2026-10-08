@@ -27,6 +27,7 @@ def test_shipped_config_loads():
     assert config.controls.keys() == CONTROLS.keys()
     # Resolved relative to config.ini, not to the current directory
     assert config.keyboard.custom_layout == DEFAULT_CONFIG_PATH.parent / 'custom_layout.ini'
+    assert config.audio.record_dir == DEFAULT_CONFIG_PATH.parent / 'recordings'
 
 
 @pytest.mark.parametrize('pattern, replacement, message', [
@@ -44,6 +45,7 @@ def test_shipped_config_loads():
     (r'^LAYOUT = .*', 'LAYOUT = dvorak', 'expected one of azerty, qwerty, custom'),
     (r'^CUSTOM_LAYOUT = .*', 'CUSTOM_LAYOUT =', 'expected a file name'),
     (r'^OCTAVE_SHIFT = .*', 'OCTAVE_SHIFT = up', 'expected an integer'),
+    (r'^RECORD_DIR = .*', 'RECORD_DIR =', 'expected a directory'),
     (r'^QUIT = .*', 'QUIT = ctrl', '\\[CONTROLS\\] QUIT'),
     (r'^CHANNELS = 2', 'CHANNELS = 2\nCHANNELS = 1', 'already exists'),
 ])

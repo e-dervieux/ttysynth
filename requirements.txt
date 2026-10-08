@@ -1,5 +1,7 @@
 numpy>=1.24
 sounddevice>=0.4.6
+# Recording (FLAC; compression_level appeared in 0.13)
+soundfile>=0.13
 rich>=13.0
 # Fallback keyboard backend for terminals without the kitty keyboard protocol
 pynput>=1.7.6

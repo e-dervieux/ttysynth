@@ -25,6 +25,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 # Local imports
+from synth.audio_engine import format_duration
 from synth.config import CONTROLS
 from synth.logging_setup import console_paused, format_record, log_history
 from synth.music import midi_to_note
@@ -103,6 +104,9 @@ class SynthTUI:
             _field("voices", status.get('voices', 0)),
             _field("keyboard", capture, "green" if capture.startswith('OK') else "bold red"),
         ]
+        recording = status.get('recording')
+        if recording is not None:
+            fields.insert(0, Text(f"● REC {format_duration(recording)}", "bold red"))
         notes = [midi_to_note(midi) for midi in sorted(handler.get_pressed_keys().values())]
 
         body = _flow(fields, width - PANEL_FRAME)

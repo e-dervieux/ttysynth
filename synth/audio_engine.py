@@ -11,8 +11,11 @@ Architecture (hybrid two-process design):
   near-idle command thread, so UI work (keyboard handling, TUI rendering)
   can never delay the audio callback.
 - A low-rate status queue flows back to the main process: log records,
-  xrun count, output latency (as reported by PortAudio) and active voice
-  count (displayed by the TUI).
+  xrun count, output latency (as reported by PortAudio), active voice
+  count and recording duration (displayed by the TUI).
+- Recording ('RECORD_START', 'RECORD_STOP') happens in the audio process
+  too: the callback queues copies of its output buffers, which a recorder
+  thread writes to a FLAC file (see _Recorder).
 - Failures of the audio process (stream lost, bug, unexpected death) are
   reported through the status queue too, and shut the synthesizer down (see
   AudioEngine._status_reader).
@@ -33,9 +36,12 @@ import threading
 import time
 import traceback
 from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 
 # Local imports
 from synth.dsp import Note, INSTRUMENTS
@@ -53,6 +59,13 @@ HEADROOM = 1.0 / 3.0
 
 # How often the audio process reports its status to the main process (seconds)
 STATUS_PERIOD = 0.1
+
+# How often the recorder thread writes the queued buffers to the file (seconds)
+RECORD_WRITE_PERIOD = 0.1
+
+# Expected errors of a recording file (cannot be created, disk full...):
+# reported, the synthesizer keeps playing
+RECORDING_ERRORS = (OSError, sf.SoundFileError)
 
 
 class _StatusQueueHandler(logging.handlers.QueueHandler):
@@ -77,6 +90,68 @@ def saturate_audio(buffer: np.ndarray) -> np.ndarray:
     pre-gain preserves clean polyphony (see HEADROOM comment above).
     """
     return np.tanh(HEADROOM * buffer)
+
+
+def format_duration(seconds: float) -> str:
+    """'m:ss' duration"""
+    minutes, seconds = divmod(int(seconds), 60)
+    return f"{minutes}:{seconds:02d}"
+
+
+class _Recorder:
+    """
+    Records the audio output to a FLAC file (24-bit, maximum compression).
+    The audio callback only queues copies of its buffers (put never blocks);
+    a thread of its own writes them, libsndfile encoding without the GIL.
+    """
+
+    def __init__(self, path: Path, sample_rate: int, channels: int):
+        """Raises one of RECORDING_ERRORS if the file cannot be created (an
+        existing file is never overwritten)"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self.sample_rate = sample_rate
+        # compression_level: 0.0 to 1.0, mapped by libsndfile to FLAC levels 0 to 8
+        self.file = sf.SoundFile(path, 'x', sample_rate, channels, subtype='PCM_24',
+                                 format='FLAC', compression_level=1.0)
+        self.blocks = queue.SimpleQueue()  # Output buffers, from the audio callback
+        self.frames = 0                    # Frames written so far
+        self.error = None                  # Write failure of the thread, if any
+        self._stopping = threading.Event()
+        self._thread = threading.Thread(target=self._run, name='recorder', daemon=True)
+        self._thread.start()
+
+    @property
+    def duration(self) -> float:
+        """Seconds written so far"""
+        return self.frames / self.sample_rate
+
+    def _run(self):
+        try:
+            while not self._stopping.wait(RECORD_WRITE_PERIOD):
+                self._write_pending()
+            self._write_pending()
+        except RECORDING_ERRORS as e:
+            self.error = e  # Reported by stop()
+
+    def _write_pending(self):
+        """Write the queued buffers, in one go"""
+        blocks = []
+        while not self.blocks.empty():  # Single consumer: never blocks
+            blocks.append(self.blocks.get())
+        if blocks:
+            data = np.concatenate(blocks)
+            self.file.write(data)
+            self.frames += len(data)
+
+    def stop(self):
+        """Write the remaining buffers and close the file (raises the write
+        error, if any)"""
+        self._stopping.set()
+        self._thread.join()
+        self.file.close()
+        if self.error is not None:
+            raise self.error
 
 
 class _AudioProcess:
@@ -105,6 +180,8 @@ class _AudioProcess:
         # Traceback of an exception raised in the audio callback, reported
         # by the command loop
         self.callback_error = None
+        # Current recording, None when not recording (read by the callback)
+        self.recorder: _Recorder | None = None
 
     def _audio_callback(self, outdata, frames, time_info, status):
         """
@@ -132,6 +209,10 @@ class _AudioProcess:
 
             for ch in range(self.channels):
                 outdata[:, ch] = buffer
+
+            recorder = self.recorder  # Read once: the command loop may reset it
+            if recorder is not None:
+                recorder.blocks.put(outdata.copy())
         except Exception:
             # Exceptions must not reach PortAudio's C caller (cffi would print
             # them over the UI and abort the stream): keep the traceback for
@@ -205,12 +286,41 @@ class _AudioProcess:
                 for note in self.notes:
                     note.volume = volume
 
+        elif cmd_type == 'RECORD_START':
+            self._start_recording(command[1])
+
+        elif cmd_type == 'RECORD_STOP':
+            self._stop_recording()
+
         elif cmd_type == 'STOP':
             self.running = False
             log.info("Audio process stopping")
 
         else:
             raise ValueError(f"Unknown command: {cmd_type}")
+
+    def _start_recording(self, path: Path):
+        if self.recorder is not None:
+            log.info(f"Already recording ({self.recorder.path})")
+            return
+        try:
+            self.recorder = _Recorder(path, self.sample_rate, self.channels)
+        except RECORDING_ERRORS as e:
+            log.error(f"Cannot record: {e}")
+            return
+        log.info(f"🔴 Recording to {path}")
+
+    def _stop_recording(self):
+        if self.recorder is None:
+            log.info("Not recording")
+            return
+        recorder, self.recorder = self.recorder, None  # The callback stops queueing
+        try:
+            recorder.stop()
+        except RECORDING_ERRORS as e:
+            log.error(f"Recording stopped, {recorder.path} may be incomplete: {e}")
+            return
+        log.info(f"⬜ Recording saved: {recorder.path} ({format_duration(recorder.duration)})")
 
     def _emit_status(self, stream):
         """Send a status snapshot to the main process (consumed by the TUI)"""
@@ -221,6 +331,8 @@ class _AudioProcess:
             'latency_ms': stream.latency * 1000.0,
             'voices': voices,
             'volume': self.volume,
+            # Seconds recorded, None when not recording
+            'recording': self.recorder.duration if self.recorder is not None else None,
         }))
 
     def run(self):
@@ -259,6 +371,8 @@ class _AudioProcess:
                         self.status_queue.put(('ERROR', "Audio stream stopped unexpectedly "
                                                         "(output device disconnected?)"))
                         return
+                    if self.recorder is not None and self.recorder.error is not None:
+                        self._stop_recording()  # Write failure (disk full...): reported
                     self._emit_status(stream)
                     last_status_time = now
         finally:
@@ -266,6 +380,8 @@ class _AudioProcess:
             # interpreter is still fully alive: no teardown race possible.
             stream.stop()
             stream.close()
+            if self.recorder is not None:  # Quitting while recording: finalize the file
+                self._stop_recording()
 
 
 def list_devices() -> str:
@@ -376,6 +492,18 @@ class AudioEngine:
         """
         if self.running:
             self.command_queue.put(('STOP_NOTE', key))
+
+    def start_recording(self):
+        """Start recording the output to a new file of the recording
+        directory, named after the current time"""
+        if self.running:
+            path = self.config.record_dir / f"{datetime.now():%Y-%m-%d_%H-%M-%S}.flac"
+            self.command_queue.put(('RECORD_START', path))
+
+    def stop_recording(self):
+        """Stop recording (the file is finalized)"""
+        if self.running:
+            self.command_queue.put(('RECORD_STOP',))
 
     def _status_reader(self, process: mp.Process):
         """

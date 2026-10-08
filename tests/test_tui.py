@@ -72,6 +72,12 @@ def test_window_too_small(synth, width, height, needed):
     assert "Keys" not in screen
 
 
+def test_recording_is_shown(synth):
+    assert "● REC" not in "\n".join(render(synth, 80, 24))
+    synth.audio_engine.latest_status = {'recording': 65.4}
+    assert "● REC 1:05" in "\n".join(render(synth, 80, 24))
+
+
 def test_held_keys_are_highlighted(synth):
     note_cells = tui.SynthTUI(synth)._render_keymap().renderable.renderables[0].renderables
     assert [cell.plain for cell in note_cells if cell.style == "reverse"] == \

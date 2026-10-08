@@ -160,6 +160,7 @@ def test_default_options(quiet_main, captured_config):
     assert app.main([]) == 0
     assert quiet_main == [logging.INFO]
     assert captured_config[0].device is None  # Shipped config.ini: system default
+    assert captured_config[0].record_dir == DEFAULT_CONFIG_PATH.parent / 'recordings'
 
 
 def test_debug_option(quiet_main, captured_config):
@@ -187,6 +188,11 @@ def test_device_option_overrides_the_config(quiet_main, captured_config, tmp_pat
         'DEVICE =', f'DEVICE = {config_device}'), encoding='utf-8')
     app.main(['--config', str(path), *option])
     assert captured_config[0].device == expected
+
+
+def test_record_dir_option_overrides_the_config(quiet_main, captured_config, tmp_path):
+    app.main(['--record-dir', str(tmp_path / 'takes')])
+    assert captured_config[0].record_dir == tmp_path / 'takes'
 
 
 def test_unknown_option(quiet_main):

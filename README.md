@@ -21,6 +21,8 @@ with an htop-like full-screen terminal interface.
   adapts to the window size; the minimum depends on the width and the layout
   (70×22 for the built-in layouts at 70 columns), and a smaller window shows
   the size needed
+- Recording of the output to FLAC files (24-bit, maximum compression), in
+  `recordings/` by default
 - Everything configurable through `config.ini` (keyboard layout, tuning,
   temperament, control keys)
 
@@ -33,9 +35,10 @@ Two processes, so UI work can never glitch the audio:
 - The **audio process** owns the PortAudio output stream and synthesizes
   audio directly inside the stream callback.
 
-Only tiny command messages (note on/off, volume, stop) cross the process
-boundary; no audio data is ever transferred. A low-rate status queue flows
-back (latency, xruns, voice count) to feed the TUI.
+Only tiny command messages (note on/off, volume, recording, stop) cross the
+process boundary; no audio data is ever transferred (recordings are written
+by the audio process itself). A low-rate status queue flows back (latency,
+xruns, voice count, recording duration) to feed the TUI.
 
 ## Project layout
 
@@ -99,6 +102,7 @@ python main.py                    # with config.ini
 python main.py --list-devices     # list the audio devices and exit
 python main.py --device 2         # output device, by index or (part of its) name
 python main.py --config my.ini    # another configuration file
+python main.py --record-dir ~/takes  # where recordings go
 python main.py --debug            # also show debug messages in the log panel
 ```
 
@@ -115,15 +119,16 @@ when you quit.
 - `v`: switch layout (azerty / qwerty / custom)
 - `c`: switch temperament (equal / pythagorean / meantone / werckmeister)
 - `(` / `)`: octave down / up
-- `b` / `n`: start / stop recording (not implemented yet)
+- `b` / `n`: start / stop recording (shown as `● REC` in the status bar)
 - `esc`: quit
 
 ### Configuration
 
 Edit `config.ini` to change the output device (system default unless set;
 `--device` overrides it), sample rate, buffer size, tuning frequency (A4),
-temperament, initial keyboard layout (`azerty`, `qwerty` or `custom`), octave
-shift and control keys.
+temperament, recording directory (`--record-dir` overrides it), initial
+keyboard layout (`azerty`, `qwerty` or `custom`), octave shift and control
+keys.
 
 With `LAYOUT = custom`, notes are mapped to keys in `custom_layout.ini`:
 any note to any character key, sharps or flats. The file explains its
@@ -159,8 +164,8 @@ that cannot be opened, device lost, crashes...). They cover note names and
 temperaments, layouts and configuration validation, the keyboard input
 parsing, the musical keyboard, the envelope and instruments (including the
 Karplus-Strong pitch), the audio process lifecycle and failure reporting,
-the application (control actions, Ctrl+C, crashed threads, exit codes,
-command line options) and the TUI layout at various window sizes.
+recording, the application (control actions, Ctrl+C, crashed threads, exit
+codes, command line options) and the TUI layout at various window sizes.
 
 ### Manual tests
 
@@ -181,4 +186,3 @@ python manual_tests.py 3    # one test (here: a tone on the audio device)
 - Windows: not supported (the terminal handling relies on termios, Unix only).
 - Losing the output device (e.g. unplugging headphones) stops the synthesizer
   with an error: it does not reconnect, restart it.
-- Recording is not implemented yet.

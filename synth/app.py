@@ -59,8 +59,8 @@ class Synthesizer:
             'temperament_next': self.music_engine.next_temperament,
             'octave_down': lambda: self.keyboard_handler.shift_octave(-1),
             'octave_up': lambda: self.keyboard_handler.shift_octave(+1),
-            'record_start': self.on_record_start,
-            'record_stop': self.on_record_stop,
+            'record_start': self.audio_engine.start_recording,
+            'record_stop': self.audio_engine.stop_recording,
             'quit': self.on_quit,
         }
         assert self.actions.keys() == CONTROLS.keys(), "every control needs exactly one action"
@@ -97,18 +97,6 @@ class Synthesizer:
         within the keyboard listener thread)"""
         log.info("Quit requested - shutting down...")
         self.running = False
-
-    def on_record_start(self):
-        """Handle record start events"""
-        log.info("🔴 Recording started")
-        # TODO: Implement recording functionality
-        log.warning("Recording not implemented")
-
-    def on_record_stop(self):
-        """Handle record stop events"""
-        log.info("⬜ Recording stopped")
-        # TODO: Implement recording functionality
-        log.warning("Recording not implemented")
 
     def start(self):
         """Start the synthesizer (raises SynthError if a component cannot
@@ -194,6 +182,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument('--device', type=parse_device,
                         help="output device, by index or (part of its) name; "
                              "overrides [AUDIO] DEVICE")
+    parser.add_argument('--record-dir', type=Path,
+                        help="directory of the recordings; overrides [AUDIO] RECORD_DIR")
     parser.add_argument('--list-devices', action='store_true',
                         help="list the audio devices and exit")
     parser.add_argument('--debug', action='store_true', help="show debug messages")
@@ -215,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         if args.device is not None:
             config = replace(config, audio=replace(config.audio, device=args.device))
+        if args.record_dir is not None:
+            config = replace(config, audio=replace(config.audio, record_dir=args.record_dir))
         Synthesizer(config).run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):
