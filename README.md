@@ -56,6 +56,7 @@ synth/
   config.py, errors.py, logging_setup.py
 tests/               automated tests (pytest), see For developers
 manual_tests.py      interactive checks with the real audio device and keyboard
+.github/workflows/   continuous integration (automated tests on Linux and macOS)
 ```
 
 ## Installation
@@ -172,6 +173,9 @@ python -m pytest -q           # quieter
 python -m pytest tests/test_music.py -k werckmeister  # one file, tests matching a name
 ```
 
+They also run on GitHub (Linux and macOS, Python 3.11 and 3.12) on every
+push and pull request, see `.github/workflows/tests.yml`.
+
 `python -m pytest` runs pytest with the Python of the active environment,
 even when another `pytest` (e.g. from a base conda installation) comes first
 on the `PATH`.
@@ -206,3 +210,7 @@ python manual_tests.py 7    # note-on latency while the TUI renders
 - Windows: not supported (the terminal handling relies on termios, Unix only).
 - Losing the output device (e.g. unplugging headphones) stops the synthesizer
   with an error: it does not reconnect, restart it.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
