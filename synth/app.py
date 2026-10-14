@@ -18,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 # Local imports
+from synth import APP_TITLE
 from synth.config import CONTROLS, DEFAULT_CONFIG_PATH, Config, load_config, parse_device
 from synth.music import MusicEngine, midi_to_note
 from synth.keyboard_handler import KeyboardHandler
@@ -194,7 +195,7 @@ class Synthesizer:
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Command line options (argv: sys.argv[1:] if None)"""
     parser = argparse.ArgumentParser(prog='python main.py',
-                                     description="Python Command Line Audio Synthesizer")
+                                     description=APP_TITLE)
     parser.add_argument('--config', type=Path, default=DEFAULT_CONFIG_PATH,
                         help="configuration file (default: config.ini of the project)")
     parser.add_argument('--device', type=parse_device,
@@ -220,8 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     setup_logging(logging.DEBUG if args.debug else logging.INFO)
-    log.info("Python Command Line Audio Synthesizer")
-    log.info("=====================================")
+    log.info(APP_TITLE)
+    log.info("=" * len(APP_TITLE))
 
     try:
         config = load_config(args.config)

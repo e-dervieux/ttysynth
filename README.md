@@ -1,4 +1,10 @@
-# Python Command Line Audio Synthesizer
+# TTYSynth: a Python Command Line Audio Synthesizer
+
+[![tests](https://github.com/e-dervieux/ttysynth/actions/workflows/tests.yml/badge.svg)](https://github.com/e-dervieux/ttysynth/actions/workflows/tests.yml)
+
+> ⚠️ Developed and tested on macOS. Linux support is **experimental**: it has
+> not been tested on a real Linux system yet (only the automated tests run on
+> Linux). See *Known limitations*.
 
 A small real-time polyphonic synthesizer played with your computer keyboard,
 with an htop-like full-screen terminal interface.
@@ -38,7 +44,7 @@ Two processes, so UI work can never glitch the audio:
 Only tiny command messages (note on/off, volume, recording, stop) cross the
 process boundary; no audio data is ever transferred (recordings are written
 by the audio process itself). A low-rate status queue flows back (latency,
-xruns, voice count, recording duration) to feed the TUI.
+`xruns`, voice count, recording duration) to feed the TUI.
 
 ## Project layout
 

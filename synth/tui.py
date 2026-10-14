@@ -27,6 +27,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 # Local imports
+from synth import APP_TITLE
 from synth.audio_engine import format_duration
 from synth.config import CONTROLS
 from synth.logging_setup import console_paused, format_record, log_history
@@ -130,7 +131,7 @@ class SynthTUI:
         body = _flow(fields, width - PANEL_FRAME)
         body.append("\n")
         body.append_text(_field("notes", " ".join(notes) if notes else "-", "magenta"))
-        return Panel(body, title="Python Command Line Audio Synthesizer", border_style="blue")
+        return Panel(body, title=APP_TITLE, border_style="blue")
 
     def _note_cells(self) -> list:
         """'key -> note' cells, sorted by pitch (custom layout files may list

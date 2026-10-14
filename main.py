@@ -1,5 +1,5 @@
 """
-Python Command Line Audio Synthesizer - entry point: python main.py
+TTYSynth, a Python Command Line Audio Synthesizer - entry point: python main.py
 (or python -m synth). The application itself is in synth/app.py.
 """
 
