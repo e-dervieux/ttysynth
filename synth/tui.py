@@ -112,7 +112,7 @@ class SynthTUI:
         fields = [
             _field("fs", f"{engine.sample_rate} Hz"),
             _field("buffer", f"{engine.buffer_size} ({engine.buffer_duration * 1000.0:.1f} ms)"),
-            _field("latency", f"{latency_ms:.1f} ms" if latency_ms is not None else "n/a"),
+            _field("stream latency", f"{latency_ms:.1f} ms" if latency_ms is not None else "n/a"),
             _field("xruns", xruns, "red" if xruns else "green"),
             Text.assemble(("tuning: ", "bold"), f"A4 = {music.tuning_freq:g} Hz, ",
                           (music.temperament, "cyan")),

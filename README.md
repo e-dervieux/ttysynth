@@ -14,7 +14,7 @@ A small real-time polyphonic synthesizer played with your computer keyboard, wit
   - **Flute**: additive synthesis (sine + harmonics) with a soft ADSR envelope
   - **Pluck**: harp / classical guitar-like sound using the dirt-cheap 80s [Karplus-Strong algorithm](https://en.wikipedia.org/wiki/Karplus%E2%80%93Strong_string_synthesis)
 - Four temperaments, switchable live: equal (modern), Pythagorean, quarter-comma meantone and Werckmeister I (III) "correct temperament" (see `synth/music.py` for how each distributes the Pythagorean comma)
-- Full-screen TUI (alternate screen buffer, like htop) showing sample rate, buffer size, output latency (as reported by PortAudio), xrun count, volume, held notes (also highlighted in the key map) and a scrolling log panel. It adapts to the window size; the minimum depends on the width and the layout (70×22 for the built-in layouts at 70 columns), and a smaller window shows the size needed
+- Full-screen TUI (alternate screen buffer, like htop) showing sample rate, buffer size, stream latency (as reported by PortAudio), xrun count, volume, held notes (also highlighted in the key map) and a scrolling log panel. It adapts to the window size; the minimum depends on the width and the layout (70×22 for the built-in layouts at 70 columns), and a smaller window shows the size needed
 - Recording of the output to FLAC files (24-bit, maximum compression), in `recordings/` by default
 - Everything configurable through `config.ini` (keyboard layout, tuning, temperament, control keys)
 
@@ -98,7 +98,7 @@ The screen switches to a full-screen interface; your scrollback is restored when
 
 ### Latency
 
-The `latency` field of the status bar is the output latency reported by the audio device; the synthesizer itself adds about 2 to 3 ms (64-sample buffer, key handling). Most of it depends on the output:
+The `stream latency` field of the status bar is the output latency PortAudio reports for the stream. What it covers depends on the system: on macOS, it includes the device's own latency; on Linux, only the audio queued by the stream, PipeWire's processing cycle and the hardware coming on top. The synthesizer itself adds about 2 to 3 ms (64-sample buffer, key handling). Most of the latency depends on the output:
 
 - built-in MacBook speakers: about 19 ms, whatever the settings (macOS processes their sound before playing it)
 - wired headphones, USB audio interfaces: much lower (a few ms for an interface)
