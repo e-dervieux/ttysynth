@@ -2,6 +2,10 @@
 Manual tests: an interactive menu of checks with the real audio device and
 keyboard, to be verified by ear and by hand (python manual_tests.py).
 The automated tests are in tests/ (run with pytest, see README.md).
+
+A test passes if it returns, fails if it raises (the traceback is printed),
+is skipped if it raises Skipped. Ctrl+C interrupts it: back to the menu, or
+end of the run with 'Run All Tests'.
 """
 
 # Global imports
@@ -12,10 +16,10 @@ import re
 import sys
 import threading
 import time
+import traceback
 import types
 
 import numpy as np
-import sounddevice as sd
 from rich.console import Console
 
 # Local imports
@@ -27,8 +31,24 @@ from synth.config import load_config
 from synth.logging_setup import console_paused, setup_logging
 from synth.tui import SynthTUI
 
-def test_basic_audio(duration=2.0, frequency=440.0):
-    """Test basic audio playback"""
+# After synth.audio_engine, whose import adds the PortAudio install hint to
+# the error if the library is missing
+import sounddevice as sd
+
+# Test outcomes
+PASSED, FAILED, SKIPPED, INTERRUPTED = 'PASSED', 'FAILED', 'SKIPPED', 'INTERRUPTED'
+OUTCOME_ICONS = {PASSED: '✅', FAILED: '❌', SKIPPED: '⏩', INTERRUPTED: '⛔'}
+
+# Exit code of a program interrupted by Ctrl+C (128 + SIGINT), as shells do
+EXIT_INTERRUPTED = 130
+
+
+class Skipped(Exception):
+    """Raised by a test that did not run (declined by the user...)"""
+
+
+def play_tone(duration=2.0, frequency=440.0):
+    """Basic audio playback"""
     print(f"Playing {frequency}Hz tone for {duration} seconds...")
 
     sample_rate = 48000
@@ -39,11 +59,10 @@ def test_basic_audio(duration=2.0, frequency=440.0):
     sd.wait()
 
     print("Basic audio test completed")
-    return True
 
 
-def test_streaming_audio(duration=3.0):
-    """Test streaming audio"""
+def play_stream(duration=3.0):
+    """Streaming audio"""
     print(f"Testing streaming audio for {duration} seconds...")
 
     sample_rate = 48000
@@ -59,13 +78,12 @@ def test_streaming_audio(duration=3.0):
     callback.phase = 0
 
     with sd.OutputStream(callback=callback,
-                      channels=1,
-                      samplerate=sample_rate,
-                      blocksize=block_size):
+                         channels=1,
+                         samplerate=sample_rate,
+                         blocksize=block_size):
         time.sleep(duration)
 
     print("Streaming audio test completed")
-    return True
 
 
 def test_music_engine():
@@ -73,33 +91,27 @@ def test_music_engine():
     print("=" * 50)
     print("TEST 1: Music Engine")
     print("=" * 50)
-    
-    try:
-        audio_config = load_config().audio
-        music = MusicEngine(audio_config.tuning_freq, audio_config.temperament)
-        
-        print("\n✅ Music engine loaded successfully")
-        
-        # Test some frequencies
-        test_notes = ['C4', 'D4', 'E4', 'C#4', 'D#4']
-        print("\n🎵 Testing some note frequencies:")
-        for note in test_notes:
-            freq = music.midi_to_frequency(note_to_midi(note))
-            print(f"  {note} -> {freq:.1f} Hz")
-        
-        # Test tuning change
-        print("\n🎼 Testing tuning change:")
-        print(f"  A4 at 440 Hz: {music.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
-        retuned = MusicEngine(442.0, audio_config.temperament)  # Slightly higher tuning
-        print(f"  A4 at 442 Hz: {retuned.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Music engine test failed: {e}")
-        return False
 
-def test_keyboard():
+    audio_config = load_config().audio
+    music = MusicEngine(audio_config.tuning_freq, audio_config.temperament)
+
+    print("\n✅ Music engine loaded successfully")
+
+    # Test some frequencies
+    test_notes = ['C4', 'D4', 'E4', 'C#4', 'D#4']
+    print("\n🎵 Testing some note frequencies:")
+    for note in test_notes:
+        freq = music.midi_to_frequency(note_to_midi(note))
+        print(f"  {note} -> {freq:.1f} Hz")
+
+    # Test tuning change
+    print("\n🎼 Testing tuning change:")
+    print(f"  A4 at 440 Hz: {music.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
+    retuned = MusicEngine(442.0, audio_config.temperament)  # Slightly higher tuning
+    print(f"  A4 at 442 Hz: {retuned.midi_to_frequency(note_to_midi('A4')):.1f} Hz")
+
+
+def log_keys():
     """Interactive keyboard test: logs note and control keys until quit"""
     config = load_config()
     done = threading.Event()
@@ -117,11 +129,8 @@ def test_keyboard():
     try:
         while not done.wait(0.1):
             pass
-    except KeyboardInterrupt:
-        pass
     finally:
         handler.stop()
-    return True
 
 
 def test_keyboard_handler():
@@ -129,163 +138,142 @@ def test_keyboard_handler():
     print("=" * 50)
     print("TEST 2: Keyboard Handler")
     print("=" * 50)
-    
-    try:
-        print("🎹 Testing keyboard handler initialization...")
-        config = load_config()
-        keyboard = KeyboardHandler(config.keyboard, config.controls,
-                                   on_note=lambda *args: None, on_control=lambda name: None)
-        
-        print("✅ Keyboard handler created successfully")
-        print(f"📝 Monitoring {len(keyboard.key_to_midi)} keys")
-        
-        # Interactive test
-        print("\n🔍 Interactive keyboard test available")
-        print("  Would you like to test keyboard input? (y/n): ", end="")
-        
-        try:
-            choice = input().lower().strip()
-            if choice == 'y':
-                print("\n⌨️  Starting interactive keyboard test...")
-                print("Press keys (ESC to finish):")
-                return test_keyboard()
-            else:
-                print("Skipping interactive test")
-                return True
-        except KeyboardInterrupt:
-            print("\nTest interrupted")
-            return True
-            
-    except Exception as e:
-        print(f"❌ Keyboard handler test failed: {e}")
-        return False
+
+    print("🎹 Testing keyboard handler initialization...")
+    config = load_config()
+    keyboard = KeyboardHandler(config.keyboard, config.controls,
+                               on_note=lambda *args: None, on_control=lambda name: None)
+
+    print("✅ Keyboard handler created successfully")
+    print(f"📝 Monitoring {len(keyboard.key_to_midi)} keys")
+
+    # Interactive test
+    print("\n🔍 Interactive keyboard test available")
+    choice = input("  Would you like to test keyboard input? (y/n): ").lower().strip()
+    if choice != 'y':
+        raise Skipped("interactive keyboard test declined")
+    print("\n⌨️  Starting interactive keyboard test...")
+    print("Press keys (ESC to finish):")
+    log_keys()
+
 
 def test_audio_basic():
     """Test 3: Basic Audio Test"""
     print("=" * 50)
     print("TEST 3: Basic Audio")
     print("=" * 50)
-    
-    return test_basic_audio(duration=2.0, frequency=440.0)
+
+    play_tone(duration=2.0, frequency=440.0)
+
 
 def test_audio_streaming():
     """Test 4: Streaming Audio Test"""
     print("=" * 50)
     print("TEST 4: Streaming Audio")
     print("=" * 50)
-    
-    return test_streaming_audio(duration=3.0)
+
+    play_stream(duration=3.0)
+
 
 def test_audio_engine():
     """Test 5: Audio Engine Test"""
     print("=" * 50)
     print("TEST 5: Audio Engine")
     print("=" * 50)
-    
+
+    print("🔊 Creating audio engine...")
+    audio = AudioEngine(load_config().audio)
+
+    print("✅ Audio engine created successfully")
+
+    print("\nAvailable audio devices:")
+    print(list_devices())
+
+    print("\n🎵 Testing audio engine with multiple frequencies...")
+
     try:
-        print("🔊 Creating audio engine...")
-        audio = AudioEngine(load_config().audio)
-        
-        print("✅ Audio engine created successfully")
-        
-        print("\nAvailable audio devices:")
-        print(list_devices())
-        
-        print("\n🎵 Testing audio engine with multiple frequencies...")
-        
-        # Start the audio engine
         audio.start()  # Raises SynthError on failure
-        
+
         print("✅ Audio engine started")
-        
+
         # Test playing notes
         test_freqs = {'C': 261.63, 'E': 329.63, 'G': 392.00}  # C major chord
-        
+
         print("\n🎶 Playing C major chord (flute) for 2 seconds...")
         for note, freq in test_freqs.items():
             audio.play_note(note, freq, instrument_type='flute')
             print(f"  Added {note}: {freq} Hz")
-        
+
         time.sleep(2.0)
-        
+
         print("\n🎵 Releasing notes one by one...")
         for note in test_freqs:
             audio.stop_note(note)
             print(f"  Released {note}")
             time.sleep(0.5)
-        
+
         print("\n🎸 Playing the same chord with the plucked string...")
         for note, freq in test_freqs.items():
             audio.play_note(note, freq, instrument_type='pluck')
             time.sleep(0.2)
-        
+
         time.sleep(2.0)
         for note in test_freqs:
             audio.stop_note(note)
-        
+
         # Test volume
         print("\n🔊 Testing volume changes...")
         audio.play_note('A', 440.0, instrument_type='flute')
-        
+
         for volume in [0.2, 0.5, 0.8, 0.5]:
             audio.set_volume(volume)
             print(f"  Volume: {volume*100:.0f}%")
             time.sleep(0.5)
-        
+
         audio.stop_note('A')
         time.sleep(0.5)
-        audio.stop()
-        
-        print("✅ Audio engine test completed successfully")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Audio engine test failed: {e}")
-        return False
+    finally:
+        audio.stop()  # Also on failure or Ctrl+C: no audio process left behind
+
+    print("✅ Audio engine test completed successfully")
+
 
 def test_full_integration():
     """Test 6: Full Integration Test"""
     print("=" * 50)
     print("TEST 6: Full Integration")
     print("=" * 50)
-    
+
+    print("🔧 Testing full synthesizer integration...")
+
+    # This would import and test the full synthesizer
+    # But we'll do a simpler integration test here
+
+    config = load_config()
+    music = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
+    audio = AudioEngine(config.audio)
+
+    def on_note(key, midi, pressed):
+        if pressed:
+            freq = music.midi_to_frequency(midi)
+            audio.play_note(key, freq)
+            print(f"♪ {key} -> {midi_to_note(midi)} ({freq:.1f} Hz)")
+        else:
+            audio.stop_note(key)
+            print(f"♫ {key} -> {midi_to_note(midi)} (off)")
+
+    KeyboardHandler(config.keyboard, config.controls, on_note=on_note,
+                    on_control=lambda name: None)
+
+    print("✅ All components initialized, callbacks configured")
+
     try:
-        print("🔧 Testing full synthesizer integration...")
-        
-        # This would import and test the full synthesizer
-        # But we'll do a simpler integration test here
-        
-        config = load_config()
-        music = MusicEngine(config.audio.tuning_freq, config.audio.temperament)
-        audio = AudioEngine(config.audio)
-
-        def on_note(key, midi, pressed):
-            if pressed:
-                freq = music.midi_to_frequency(midi)
-                audio.play_note(key, freq)
-                print(f"♪ {key} -> {midi_to_note(midi)} ({freq:.1f} Hz)")
-            else:
-                audio.stop_note(key)
-                print(f"♫ {key} -> {midi_to_note(midi)} (off)")
-
-        KeyboardHandler(config.keyboard, config.controls, on_note=on_note,
-                        on_control=lambda name: None)
-        
-        print("✅ All components initialized, callbacks configured")
-        
-        # Start audio
         audio.start()  # Raises SynthError on failure
-        
         print("✅ Integration test setup completed")
         print("📋 Would test keyboard integration, but that requires interactive input")
-        
+    finally:
         audio.stop()
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Integration test failed: {e}")
-        return False
+
 
 def test_note_latency(notes=300):
     """Test 7: note-on latency while the TUI renders"""
@@ -347,126 +335,129 @@ def test_note_latency(notes=300):
         synth.audio_engine.stop()
 
     print("With the synthesizer's interval, p99 and max should stay under about 1 ms.")
-    return True
 
 
-def run_all_tests():
-    """Run all tests"""
+# Menu key -> (name, test)
+TESTS = {
+    '1': ("Music Engine", test_music_engine),
+    '2': ("Keyboard Handler", test_keyboard_handler),
+    '3': ("Basic Audio", test_audio_basic),
+    '4': ("Streaming Audio", test_audio_streaming),
+    '5': ("Audio Engine", test_audio_engine),
+    '6': ("Full Integration", test_full_integration),
+    '7': ("Note-on Latency", test_note_latency),
+}
+
+
+def run_test(name, test_func) -> str:
+    """Run one test, print and return its outcome"""
+    try:
+        test_func()
+        outcome = PASSED
+    except Skipped as e:
+        print(f"Skipped: {e}")
+        outcome = SKIPPED
+    except KeyboardInterrupt:
+        print("\nInterrupted (Ctrl+C)")
+        outcome = INTERRUPTED
+    except Exception:
+        traceback.print_exc()
+        outcome = FAILED
+    print(f"\n{OUTCOME_ICONS[outcome]} {name} test {outcome}")
+    return outcome
+
+
+def exit_code(outcomes) -> int:
+    """Exit code of a run: interrupted, else failed if any test failed"""
+    if INTERRUPTED in outcomes:
+        return EXIT_INTERRUPTED
+    return 1 if FAILED in outcomes else 0
+
+
+def run_all_tests() -> int:
+    """Run all tests (Ctrl+C ends the run), return the exit code"""
     print("🧪 SYNTHESIZER MANUAL TESTS")
     print("=" * 60)
-    
-    tests = [
-        ("Music Engine", test_music_engine),
-        ("Keyboard Handler", test_keyboard_handler),
-        ("Basic Audio", test_audio_basic),
-        ("Streaming Audio", test_audio_streaming),
-        ("Audio Engine", test_audio_engine),
-        ("Full Integration", test_full_integration),
-        ("Note-on Latency", test_note_latency),
-    ]
-    
+
     results = []
-    
-    for test_name, test_func in tests:
-        print(f"\n🔍 Running {test_name} test...")
-        try:
-            result = test_func()
-            results.append((test_name, result))
-            if result:
-                print(f"✅ {test_name} test PASSED")
-            else:
-                print(f"❌ {test_name} test FAILED")
-        except Exception as e:
-            print(f"❌ {test_name} test CRASHED: {e}")
-            results.append((test_name, False))
-    
+    for name, test_func in TESTS.values():
+        print(f"\n🔍 Running {name} test...")
+        outcome = run_test(name, test_func)
+        results.append((name, outcome))
+        if outcome == INTERRUPTED:
+            break
+
     # Summary
     print("\n" + "=" * 60)
     print("📊 TEST RESULTS SUMMARY")
     print("=" * 60)
-    
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-    
-    for test_name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"  {test_name:20} {status}")
-    
-    print(f"\n🎯 Overall: {passed}/{total} tests passed ({passed/total*100:.1f}%)")
-    
-    if passed == total:
-        print("🎉 All tests passed! Your synthesizer should work correctly.")
-    else:
-        print("⚠️  Some tests failed. Check the details above.")
-    
-    return passed == total
 
-def main():
-    """Main test runner"""
-    if len(sys.argv) > 1:
-        # Run specific test
-        test_num = sys.argv[1]
-        
-        test_map = {
-            '1': ("Music Engine", test_music_engine),
-            '2': ("Keyboard Handler", test_keyboard_handler),
-            '3': ("Basic Audio", test_audio_basic),
-            '4': ("Streaming Audio", test_audio_streaming),
-            '5': ("Audio Engine", test_audio_engine),
-            '6': ("Full Integration", test_full_integration),
-            '7': ("Note-on Latency", test_note_latency),
-        }
-        
-        if test_num in test_map:
-            test_name, test_func = test_map[test_num]
-            print(f"Running {test_name} test...")
-            result = test_func()
-            return 0 if result else 1
-        else:
-            print("Invalid test number. Available tests:")
-            for num, (name, _) in test_map.items():
-                print(f"  {num}: {name}")
-            return 1
+    for name, outcome in results:
+        print(f"  {name:20} {OUTCOME_ICONS[outcome]} {outcome}")
+
+    outcomes = [outcome for _, outcome in results]
+    not_run = len(TESTS) - len(results)
+    print(f"\n🎯 Overall: {outcomes.count(PASSED)} passed, {outcomes.count(FAILED)} failed, "
+          f"{outcomes.count(SKIPPED)} skipped, {not_run} not run")
+
+    code = exit_code(outcomes)
+    if code == 0:
+        print("🎉 No test failed! Your synthesizer should work correctly.")
     else:
-        # Interactive menu
-        print("🧪 SYNTHESIZER MANUAL TESTS")
-        print("=" * 40)
-        print("Select a test to run:")
-        print("  1: Music Engine Test")
-        print("  2: Keyboard Handler Test")
-        print("  3: Basic Audio Test")
-        print("  4: Streaming Audio Test")
-        print("  5: Audio Engine Test")
-        print("  6: Full Integration Test")
-        print("  7: Note-on Latency Test")
-        print("  a: Run All Tests")
-        print("  q: Quit")
-        
-        while True:
+        print("⚠️  Not all tests ran or passed. Check the details above.")
+    return code
+
+
+def menu() -> int:
+    """Interactive menu, return the exit code"""
+    print("🧪 SYNTHESIZER MANUAL TESTS")
+    print("=" * 40)
+    print("Select a test to run:")
+    for key, (name, _) in TESTS.items():
+        print(f"  {key}: {name} Test")
+    print("  a: Run All Tests")
+    print("  q: Quit")
+
+    while True:
+        # Ctrl+C or Ctrl+D at the prompt: quit, without a traceback
+        try:
             choice = input("\nEnter your choice: ").lower().strip()
-            
-            if choice == 'q':
-                print("Goodbye!")
-                return 0
-            elif choice == 'a':
-                success = run_all_tests()
-                return 0 if success else 1
-            elif choice in '1234567':
-                test_map = {
-                    '1': test_music_engine,
-                    '2': test_keyboard_handler,
-                    '3': test_audio_basic,
-                    '4': test_audio_streaming,
-                    '5': test_audio_engine,
-                    '6': test_full_integration,
-                    '7': test_note_latency,
-                }
-                result = test_map[choice]()
-                print(f"\nTest {'PASSED' if result else 'FAILED'}")
-            else:
-                print("Invalid choice. Please try again.")
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            return EXIT_INTERRUPTED
+        except EOFError:
+            print("\nGoodbye!")
+            return 0
+
+        if choice == 'q':
+            print("Goodbye!")
+            return 0
+        elif choice == 'a':
+            return run_all_tests()
+        elif choice in TESTS:
+            run_test(*TESTS[choice])
+        else:
+            print("Invalid choice. Please try again.")
+
+
+def main() -> int:
+    """Main test runner"""
+    if len(sys.argv) == 1:
+        return menu()
+
+    # Run specific test
+    test_num = sys.argv[1]
+    if test_num not in TESTS:
+        print("Invalid test number. Available tests:")
+        for num, (name, _) in TESTS.items():
+            print(f"  {num}: {name}")
+        return 1
+    name, test_func = TESTS[test_num]
+    print(f"Running {name} test...")
+    return exit_code([run_test(name, test_func)])
+
 
 if __name__ == "__main__":
     setup_logging(logging.DEBUG)
     print("Running manual tests...")
-    sys.exit(main()) 
+    sys.exit(main())
