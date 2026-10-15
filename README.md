@@ -2,9 +2,9 @@
 
 [![tests](https://github.com/e-dervieux/ttysynth/actions/workflows/tests.yml/badge.svg)](https://github.com/e-dervieux/ttysynth/actions/workflows/tests.yml)
 
-> ⚠️ Developed and tested on macOS. Linux support is **experimental**: it has not been tested on a real Linux system yet (only the automated tests run on Linux). See *Known limitations*.
-
 A small real-time polyphonic synthesizer played with your computer keyboard, with an htop-like full-screen terminal interface.
+
+Runs on macOS and Linux (tested on Ubuntu 26.04: GNOME on Wayland, PipeWire); see *Known limitations*.
 
 ## Features
 
@@ -162,7 +162,7 @@ python manual_tests.py 7    # note-on latency while the TUI renders
 
 ## Known limitations
 
-- Linux: partially supported. Keyboard input works in terminals supporting the kitty keyboard protocol (kitty, foot, WezTerm, Alacritty, Ghostty); the pynput fallback only works under X11: under Wayland (the default of most recent distributions, Ubuntu included), other terminals are refused with an error message. PortAudio must be installed (see *Installation*).
+- Linux: PortAudio must be installed (see *Installation*). Under Wayland (the default of most recent distributions, Ubuntu included), keyboard input needs a terminal supporting the kitty keyboard protocol (kitty, foot, WezTerm, Alacritty, Ghostty; not GNOME's default terminal): the pynput fallback only works under X11, so other terminals are refused with an error message.
 - Windows: not supported (the terminal handling relies on termios, Unix only).
 - Losing the output device (e.g. unplugging headphones) stops the synthesizer with an error: it does not reconnect, restart it.
 
