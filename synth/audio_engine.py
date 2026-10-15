@@ -40,7 +40,15 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except OSError as e:
+    # The sounddevice wheels bundle PortAudio on macOS and Windows, not on
+    # Linux: it must be installed on the system. The note is printed after
+    # the traceback.
+    e.add_note("If you're on Linux, you may need to install PortAudio: "
+               "sudo apt install libportaudio2 (Debian / Ubuntu)")
+    raise
 import soundfile as sf
 
 # Local imports

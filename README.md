@@ -69,6 +69,13 @@ manual_tests.py      interactive checks with the real audio device and keyboard
 
 Requires Python >= 3.11.
 
+On Linux, also install the PortAudio library (bundled with the Python
+package on macOS and Windows, not on Linux):
+
+```bash
+sudo apt install libportaudio2   # Debian / Ubuntu
+```
+
 ### With pip
 
 ```bash
@@ -212,7 +219,7 @@ python manual_tests.py 7    # note-on latency while the TUI renders
 - Linux: partially supported. Keyboard input works in terminals supporting the
   kitty keyboard protocol (kitty, foot, WezTerm, Alacritty, Ghostty); the pynput
   fallback only works under X11, not Wayland. PortAudio must be installed
-  (e.g. `apt install libportaudio2`).
+  (see *Installation*).
 - Windows: not supported (the terminal handling relies on termios, Unix only).
 - Losing the output device (e.g. unplugging headphones) stops the synthesizer
   with an error: it does not reconnect, restart it.
