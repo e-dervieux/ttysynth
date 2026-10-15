@@ -120,7 +120,8 @@ class SynthTUI:
             _field("instrument", self.synth.current_instrument, "cyan"),
             _field("layout", handler.layout, "cyan"),
             _field("octave", f"{handler.octave_shift:+d}"),
-            _field("voices", status.get('voices', 0)),
+            # Two characters wide: the next fields stay in place from 9 to 10 voices
+            _field("voices", f"{status.get('voices', 0):2d}"),
             _field("keyboard", capture, "green" if capture.startswith('OK') else "bold red"),
         ]
         recording = status.get('recording')

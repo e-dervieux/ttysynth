@@ -54,6 +54,16 @@ def test_everything_is_visible(synth, width, height):
     assert "log line 49" in lines[-2] and "log line 47" in screen
 
 
+def test_status_fields_stay_in_place_from_9_to_10_voices(synth):
+    columns = []
+    for voices in (9, 10):
+        synth.audio_engine.latest_status = {'voices': voices}
+        # Wide enough for the keyboard field to follow the voices on the same line
+        screen = "\n".join(render(synth, 250, 60))
+        columns.append(screen.index("keyboard:"))
+    assert columns[0] == columns[1]
+
+
 def test_log_panel_fills_the_remaining_height(synth):
     small, large = render(synth, 80, 24), render(synth, 80, 60)
     count = lambda lines: sum("[  INFO   ]" in line for line in lines)
