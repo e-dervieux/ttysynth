@@ -112,15 +112,16 @@ def test_output_stage(audio_config, volume):
         assert outdata[:, 0] == pytest.approx(expected) and outdata[:, 1] == pytest.approx(expected)
 
 
-@pytest.mark.parametrize('min_latency, mode, logs', [
-    (False, '', ['Audio stream started with latency=low']),
-    (True, '', ['Audio stream started with latency=minimum']),
-    (True, 'no-min-latency', ['Failed with latency=minimum', 'Audio stream started with latency=low']),
+@pytest.mark.parametrize('queued_buffers, mode, logs', [
+    (None, '', ['Audio stream started with latency=low']),
+    (2, '', ['Audio stream started with latency=2 x 64 samples, 2.7 ms']),
+    (1, 'no-queued-buffers', ['Failed with latency=1 x 64 samples, 1.3 ms',
+                              'Audio stream started with latency=low']),
 ])
-def test_latency_settings(audio_config, monkeypatch, caplog, min_latency, mode, logs):
+def test_latency_settings(audio_config, monkeypatch, caplog, queued_buffers, mode, logs):
     monkeypatch.setenv('FAKE_SD', mode)
     caplog.set_level(logging.INFO)
-    engine = AudioEngine(replace(audio_config, min_latency=min_latency))
+    engine = AudioEngine(replace(audio_config, queued_buffers=queued_buffers))
     try:
         engine.start()
     finally:

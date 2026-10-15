@@ -22,6 +22,7 @@ def variant(tmp_path, pattern: str, replacement: str) -> str:
 def test_shipped_config_loads():
     config = load_config()
     assert config.audio.device is None  # System default
+    assert config.audio.queued_buffers is None  # Device's default latency
     assert config.audio.sample_rate > 0 and config.audio.buffer_size > 0
     assert 0 <= config.audio.default_volume <= 1
     assert config.controls.keys() == CONTROLS.keys()
@@ -37,6 +38,8 @@ def test_shipped_config_loads():
     (r'^\[CONTROLS\][\s\S]*', '', 'missing section \\[CONTROLS\\]'),
     (r'^BUFFER_SIZE = .*', 'BUFFER_SIZE = abc', "BUFFER_SIZE = 'abc': expected a positive integer"),
     (r'^BUFFER_SIZE = .*', 'BUFFER_SIZE = 0', 'expected a positive integer'),
+    (r'^QUEUED_BUFFERS =.*', 'QUEUED_BUFFERS = 0', 'expected empty or a positive integer'),
+    (r'^QUEUED_BUFFERS =.*', 'QUEUED_BUFFERS = two', 'expected empty or a positive integer'),
     (r'^CHANNELS = .*', 'CHANNELS = 2.5', 'expected a positive integer'),
     (r'^DEFAULT_VOLUME = .*', 'DEFAULT_VOLUME = 3', 'expected a number between 0 and 1'),
     (r'^TUNING_FREQ = .*', 'TUNING_FREQ = -440', 'expected a positive number'),

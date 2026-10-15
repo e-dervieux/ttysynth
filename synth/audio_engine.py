@@ -176,7 +176,7 @@ class _AudioProcess:
         self.sample_rate = audio_config.sample_rate
         self.buffer_size = audio_config.buffer_size
         self.channels = audio_config.channels
-        self.min_latency = audio_config.min_latency
+        self.queued_buffers = audio_config.queued_buffers
 
         # Shared between the command loop and the audio callback. The lock
         # guards the note list; it is only ever held for microseconds (list
@@ -276,18 +276,22 @@ class _AudioProcess:
         failures (device busy, unsupported settings...) fail both alike.
         (latency=None would mean the sounddevice default: 'high' again.)
 
-        With --min-latency, the lowest latency the device accepts is tried
-        first: 0, which PortAudio raises to the device minimum. 'low' is the
-        device's *default* low latency, often higher (e.g. 2.7 ms instead of
-        1.3 ms), with more margin against xruns.
+        With queued buffers set (QUEUED_BUFFERS, --queued-buffers,
+        --min-latency), their duration is tried first, in seconds: a
+        suggestion, which PortAudio may round up (at least to the device
+        minimum). 'low' is the device's *default* low latency, often higher
+        (e.g. 8 ms for 64-sample buffers), with more margin against xruns.
         """
         latency_options = ['low', 'high']
-        if self.min_latency:
-            latency_options.insert(0, 0.0)
+        if self.queued_buffers is not None:
+            latency_options.insert(0, self.queued_buffers * self.buffer_size / self.sample_rate)
         last_error = None
 
         for latency in latency_options:
-            name = 'minimum' if latency == 0.0 else latency
+            if isinstance(latency, str):
+                name = latency
+            else:
+                name = f"{self.queued_buffers} x {self.buffer_size} samples, {latency * 1000:.1f} ms"
             stream = None
             try:
                 log.info(f"Trying latency setting: {name}")

@@ -209,10 +209,33 @@ def test_device_option_overrides_the_config(quiet_main, captured_config, tmp_pat
     assert captured_config[0].device == expected
 
 
-def test_min_latency_option(quiet_main, captured_config):
-    app.main([])
-    app.main(['--min-latency'])
-    assert [audio.min_latency for audio in captured_config] == [False, True]
+@pytest.mark.parametrize('config_value, options, expected', [
+    ('', [], None),
+    ('', ['--min-latency'], 1),
+    ('4', [], 4),
+    ('4', ['--queued-buffers', '2'], 2),
+    ('4', ['--min-latency'], 1),
+])
+def test_queued_buffers_options_override_the_config(quiet_main, captured_config, tmp_path,
+                                                    config_value, options, expected):
+    path = tmp_path / 'other.ini'
+    path.write_text(DEFAULT_CONFIG_PATH.read_text(encoding='utf-8').replace(
+        'QUEUED_BUFFERS =', f'QUEUED_BUFFERS = {config_value}'), encoding='utf-8')
+    app.main(['--config', str(path), *options])
+    assert captured_config[0].queued_buffers == expected
+
+
+def test_queued_buffers_wins_over_min_latency(quiet_main, captured_config, caplog):
+    app.main(['--min-latency', '--queued-buffers', '3'])
+    assert captured_config[0].queued_buffers == 3
+    assert "--min-latency ignored: --queued-buffers 3 given" in caplog.text
+
+
+@pytest.mark.parametrize('value', ['0', '-1', 'two'])
+def test_invalid_queued_buffers_option(quiet_main, value):
+    with pytest.raises(SystemExit) as exit_info:
+        app.main(['--queued-buffers', value])
+    assert exit_info.value.code == 2
 
 
 def test_record_dir_option_overrides_the_config(quiet_main, captured_config, tmp_path):

@@ -192,6 +192,13 @@ class Synthesizer:
             raise self._thread_error
 
 
+def _positive_int(value: str) -> int:
+    """argparse type of --queued-buffers"""
+    if not value.isdigit() or int(value) == 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got '{value}'")
+    return int(value)
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Command line options (argv: sys.argv[1:] if None)"""
     parser = argparse.ArgumentParser(prog='python main.py',
@@ -201,10 +208,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument('--device', type=parse_device,
                         help="output device, by index or (part of its) name; "
                              "overrides [AUDIO] DEVICE")
+    parser.add_argument('--queued-buffers', type=_positive_int, metavar='N',
+                        help="number of buffers queued ahead of the output, instead of the "
+                             "device's default low latency: fewer means less delay, but less "
+                             "margin against xruns (dropouts), check their count in the status "
+                             "bar; overrides [AUDIO] QUEUED_BUFFERS")
     parser.add_argument('--min-latency', action='store_true',
-                        help="request the lowest output latency the device accepts, instead "
-                             "of its default low latency: less delay, but less margin "
-                             "against xruns (dropouts), check their count in the status bar")
+                        help="the lowest output latency: same as --queued-buffers 1")
     parser.add_argument('--record-dir', type=Path,
                         help="directory of the recordings; overrides [AUDIO] RECORD_DIR")
     parser.add_argument('--list-devices', action='store_true',
@@ -230,8 +240,12 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, audio=replace(config.audio, device=args.device))
         if args.record_dir is not None:
             config = replace(config, audio=replace(config.audio, record_dir=args.record_dir))
-        if args.min_latency:
-            config = replace(config, audio=replace(config.audio, min_latency=True))
+        if args.queued_buffers is not None:
+            if args.min_latency:
+                log.warning(f"--min-latency ignored: --queued-buffers {args.queued_buffers} given")
+            config = replace(config, audio=replace(config.audio, queued_buffers=args.queued_buffers))
+        elif args.min_latency:
+            config = replace(config, audio=replace(config.audio, queued_buffers=1))
         Synthesizer(config).run()
     except SynthError as e:
         # Expected failure (configuration, audio device, keyboard input):

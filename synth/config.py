@@ -39,8 +39,8 @@ CONTROLS = {
 
 # Expected options of each section (configparser lowercases option names)
 _SCHEMA = {
-    'AUDIO': ('device', 'sample_rate', 'buffer_size', 'channels', 'default_volume',
-              'tuning_freq', 'temperament', 'record_dir'),
+    'AUDIO': ('device', 'sample_rate', 'buffer_size', 'queued_buffers', 'channels',
+              'default_volume', 'tuning_freq', 'temperament', 'record_dir'),
     'KEYBOARD': ('layout', 'custom_layout', 'octave_shift'),
     'CONTROLS': tuple(CONTROLS),
 }
@@ -52,12 +52,12 @@ class AudioConfig:
     device: int | str | None  # Output device: index or (part of) name, None: system default
     sample_rate: int       # Hz
     buffer_size: int       # samples
+    queued_buffers: int | None  # Buffers queued ahead of the output, None: device's default
     channels: int
     default_volume: float  # 0.0 to 1.0
     tuning_freq: float     # Hz, frequency of A4
     temperament: str       # One of music.TEMPERAMENTS
     record_dir: Path       # Directory of the recordings, resolved relative to config.ini
-    min_latency: bool      # Lowest output latency the device accepts (--min-latency only)
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,13 @@ def _get(parser, section: str, option: str, convert=str, valid=lambda value: Tru
     if result is None or not valid(result):
         raise ConfigError(f"{_where(section, option)} = '{value}': expected {expected}")
     return result
+
+
+def _get_optional(parser, section: str, option: str, *args, **kwargs):
+    """Like _get, but an empty value is valid: None"""
+    if not parser[section][option].strip():
+        return None
+    return _get(parser, section, option, *args, **kwargs)
 
 
 def _positive(value) -> bool:
@@ -152,6 +159,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         device=parse_device(parser['AUDIO']['device']),
         sample_rate=_get(parser, 'AUDIO', 'sample_rate', int, _positive, 'a positive integer'),
         buffer_size=_get(parser, 'AUDIO', 'buffer_size', int, _positive, 'a positive integer'),
+        queued_buffers=_get_optional(parser, 'AUDIO', 'queued_buffers', int, _positive,
+                                     'empty or a positive integer'),
         channels=_get(parser, 'AUDIO', 'channels', int, _positive, 'a positive integer'),
         default_volume=_get(parser, 'AUDIO', 'default_volume', float, lambda v: 0 <= v <= 1,
                             'a number between 0 and 1'),
@@ -160,7 +169,6 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
                          expected=f"one of {', '.join(TEMPERAMENTS)}"),
         record_dir=path.parent / _get(parser, 'AUDIO', 'record_dir', valid=bool,
                                       expected='a directory'),
-        min_latency=False,  # Command line option only
     )
 
     keyboard = KeyboardConfig(

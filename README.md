@@ -88,7 +88,8 @@ For the best experience, run the synth in a kitty-protocol-capable terminal.
 python main.py                    # with config.ini
 python main.py --list-devices     # list the audio devices and exit
 python main.py --device 2         # output device, by index or (part of its) name
-python main.py --min-latency      # lowest output latency the device accepts (see below)
+python main.py --queued-buffers 2 # buffers queued ahead of the output (see Latency below)
+python main.py --min-latency      # lowest output latency: same as --queued-buffers 1
 python main.py --config my.ini    # another configuration file
 python main.py --record-dir ~/takes  # where recordings go
 python main.py --debug            # also show debug messages in the log panel
@@ -104,7 +105,7 @@ The `stream latency` field of the status bar is the output latency PortAudio rep
 - wired headphones, USB audio interfaces: much lower (a few ms for an interface)
 - Bluetooth headphones: 150 ms or more, unusable for playing
 
-By default, the stream uses the device's default low latency. `--min-latency` requests the lowest one the device accepts instead (e.g. 1.3 ms instead of 2.7 ms on some devices; no change on the built-in speakers): less delay, but less margin against dropouts. Watch the `xruns` count of the status bar. If the device refuses it, the default is used.
+By default, the stream uses the device's default low latency (e.g. 8 ms on Linux with PipeWire). `QUEUED_BUFFERS` in `config.ini`, or `--queued-buffers N`, sets the number of buffers queued ahead of the output instead: each one adds one buffer of delay (1.3 ms with 64-sample buffers at 48 kHz) and as much margin against dropouts. `--min-latency` is a shortcut for 1, the lowest; if both options are given, `--queued-buffers` wins. The device may round the request up (it can't go below its own minimum; no change at all on the built-in MacBook speakers): the status bar shows what it actually uses. Watch its `xruns` count to find the lowest setting that plays cleanly. If the device refuses the request, its default is used.
 
 On Linux, the audio callback asks RealtimeKit (rtkit, the desktop's service PipeWire also uses) for real-time priority, as macOS gives it by itself: no permission or group needed. Without it (the log then says why), the synthesizer still works, with more xruns at low latency.
 
