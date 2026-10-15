@@ -5,6 +5,11 @@ Instrument classes for audio synthesis
 import numpy as np
 from abc import ABC, abstractmethod
 
+# Random generator of the plucked string noise bursts. Created here, at
+# import time: numpy loads its random module on first use only, which took
+# several ms - too long inside the audio callback (xruns on the first pluck).
+_rng = np.random.default_rng()
+
 
 class Instrument(ABC):
     """Abstract base class for all instruments"""
@@ -155,8 +160,7 @@ class PluckedString(Instrument):
             # when sizing the delay line. Residual pitch error is bounded by
             # the +/-0.5 sample quantization (a few cents, fine for this use).
             n = max(2, int(round(self.sample_rate / frequency + 0.5)))
-            rng = np.random.default_rng()
-            noise = rng.uniform(-1.0, 1.0, n)
+            noise = _rng.uniform(-1.0, 1.0, n)
             # Remove the DC component of the burst: the averaging filter does
             # not attenuate DC, so any offset would ring forever.
             noise -= noise.mean()

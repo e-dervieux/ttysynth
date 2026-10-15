@@ -2,6 +2,9 @@
 
 import copy
 import math
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -136,3 +139,11 @@ def test_plucked_string_buffer_size_does_not_change_the_sound():
         chunks.append(twin.generate_audio(440.0, size, produced))
         produced += size
     assert np.array_equal(np.concatenate(chunks), reference)
+
+
+def test_numpy_random_is_loaded_at_import():
+    """numpy loads its random module on first use: it must not be inside the
+    audio callback, on the first plucked note (several ms, xruns). Checked
+    in a fresh interpreter: this test session has already loaded it."""
+    code = "import sys, synth.dsp; assert 'numpy.random' in sys.modules"
+    subprocess.run([sys.executable, '-c', code], check=True, cwd=Path(__file__).parents[1])

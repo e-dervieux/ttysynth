@@ -256,3 +256,9 @@ def test_write_failure_stops_the_recording_only(audio_config, caplog):
     assert 'take.flac may be incomplete: [Errno 28] No space left on device' in caplog.text
     process._audio_callback(np.zeros((64, 2), np.float32), 64, None, None)
     assert process.callback_error is None
+
+
+def test_warm_up_leaves_no_notes(audio_config):
+    process = _AudioProcess(queue.Queue(), queue.Queue(), audio_config)
+    process._warm_up()
+    assert process.notes == [] and process.xruns == 0

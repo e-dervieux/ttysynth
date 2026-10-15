@@ -26,6 +26,7 @@ shipping rendered audio through queues.
 """
 
 # Global imports
+import gc
 import logging
 import logging.handlers
 import multiprocessing as mp
@@ -230,6 +231,17 @@ class _AudioProcess:
             self.callback_error = traceback.format_exc()
             raise sd.CallbackAbort
 
+    def _warm_up(self):
+        """
+        Run the callback once, with a note of each instrument, before the
+        stream starts: first calls are slow (lazy imports, numpy setup),
+        enough for the first real callbacks to miss their deadline (xruns).
+        """
+        self.notes = [Note(440.0, instrument(self.sample_rate)) for instrument in INSTRUMENTS.values()]
+        silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
+        self._audio_callback(silence, self.buffer_size, None, None)
+        self.notes = []
+
     def _create_stream(self) -> sd.OutputStream:
         """
         Create and start the output stream: low latency first, then high
@@ -356,6 +368,12 @@ class _AudioProcess:
         ('ERROR': expected, e.g. device lost; 'CRASH': bug in the callback).
         Other exceptions are bugs, reported by audio_process_main.
         """
+        self._warm_up()
+        # Everything created so far (modules, classes...) lives until the
+        # end: exclude it from garbage collection, whose scans of these
+        # objects paused the callback for ~2 ms every few tens of seconds.
+        gc.freeze()
+
         try:
             stream = self._create_stream()
         except sd.PortAudioError as e:
