@@ -186,7 +186,7 @@ python -m pytest -q           # quieter
 python -m pytest tests/test_music.py -k werckmeister  # one file, tests matching a name
 ```
 
-They also run on GitHub (Linux and macOS, Python 3.11 and 3.12) on every
+They also run on GitHub (Linux and macOS, Python 3.11, 3.12 and 3.14) on every
 push and pull request, see `.github/workflows/tests.yml`.
 
 `python -m pytest` runs pytest with the Python of the active environment,

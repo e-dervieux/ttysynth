@@ -74,6 +74,13 @@ STATUS_PERIOD = 0.1
 # How often the recorder thread writes the queued buffers to the file (seconds)
 RECORD_WRITE_PERIOD = 0.1
 
+# Start method of the audio process: 'spawn' (a fresh interpreter) on every
+# OS, rather than each platform's default. On Linux, 'fork' (up to Python
+# 3.13) copies the main process in the middle of its threads' work, and
+# 'forkserver' (since 3.14) starts processes with the environment of its
+# first use, ignoring later changes.
+_spawn = mp.get_context('spawn')
+
 # Expected errors of a recording file (cannot be created, disk full...):
 # reported, the synthesizer keeps playing
 RECORDING_ERRORS = (OSError, sf.SoundFileError)
@@ -447,9 +454,9 @@ class AudioEngine:
         # GIL_SWITCH_INTERVAL). The receiving end is kept open here too:
         # commands sent after the audio process died then do not fail (its
         # death is reported by the status reader).
-        self._command_receiver, self._command_sender = mp.Pipe(duplex=False)
+        self._command_receiver, self._command_sender = _spawn.Pipe(duplex=False)
         self._command_lock = threading.Lock()  # send() is called from several threads
-        self.status_queue = mp.Queue()
+        self.status_queue = _spawn.Queue()
         self.process = None
         self.running = False
 
@@ -590,7 +597,7 @@ class AudioEngine:
         self._start_error = None
 
         log.info("Starting audio process")
-        self.process = mp.Process(
+        self.process = _spawn.Process(
             target=audio_process_main,
             args=(self._command_receiver, self.status_queue,
                   replace(self.config, device=device['index']),

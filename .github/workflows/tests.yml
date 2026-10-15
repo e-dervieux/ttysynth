@@ -10,7 +10,7 @@ jobs:
       fail-fast: false  # One failing platform does not cancel the others
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python: ['3.11', '3.12']
+        python: ['3.11', '3.12', '3.14']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10  # A hung audio process test must not run for hours
     steps:
