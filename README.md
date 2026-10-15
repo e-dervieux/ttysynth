@@ -36,6 +36,7 @@ custom_layout.ini    custom note layout (LAYOUT = custom)
 synth/
   app.py             Synthesizer: coordinates the components, control actions
   audio_engine.py    audio process (PortAudio stream, synthesis in its callback)
+  realtime.py        real-time priority of the audio callback (Linux, rtkit)
   dsp/               instruments and notes (sound generation, envelopes)
   keyboard_handler.py, keymap.py, input_backends.py   keyboard input and layouts
   music.py           note names, MIDI numbers, frequencies
@@ -104,6 +105,8 @@ The `latency` field of the status bar is the output latency reported by the audi
 - Bluetooth headphones: 150 ms or more, unusable for playing
 
 By default, the stream uses the device's default low latency. `--min-latency` requests the lowest one the device accepts instead (e.g. 1.3 ms instead of 2.7 ms on some devices; no change on the built-in speakers): less delay, but less margin against dropouts. Watch the `xruns` count of the status bar. If the device refuses it, the default is used.
+
+On Linux, the audio callback asks RealtimeKit (rtkit, the desktop's service PipeWire also uses) for real-time priority, as macOS gives it by itself: no permission or group needed. Without it (the log then says why), the synthesizer still works, with more xruns at low latency.
 
 ### Default controls (see `config.ini`)
 

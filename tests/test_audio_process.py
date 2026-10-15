@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+import synth.audio_engine as audio_engine
 from synth.audio_engine import (HEADROOM, RECORDING_ERRORS, AudioEngine, AudioProcessCrash,
                                 _AudioProcess, _Recorder)
 from synth.dsp import Flute, Note
@@ -258,7 +259,22 @@ def test_write_failure_stops_the_recording_only(audio_config, caplog):
     assert process.callback_error is None
 
 
-def test_warm_up_leaves_no_notes(audio_config):
+def test_warm_up_leaves_no_trace(audio_config):
+    """No notes, and the stream's callback thread remains to be registered"""
     process = _AudioProcess(queue.Queue(), queue.Queue(), audio_config)
     process._warm_up()
     assert process.notes == [] and process.xruns == 0
+    assert process.callback_thread_id is None and not process.callback_started.is_set()
+
+
+def test_refused_realtime_priority_is_only_a_warning(audio_config, monkeypatch, caplog):
+    requests = []
+    def refuse(thread_id):
+        requests.append(thread_id)
+        raise OSError("rtkit: Operation not permitted")
+    monkeypatch.setattr(audio_engine, 'make_thread_realtime', refuse)
+    process = _AudioProcess(queue.Queue(), queue.Queue(), audio_config)
+    process._audio_callback(np.zeros((64, 2), np.float32), 64, None, None)
+    process._make_callback_realtime()
+    assert requests == [threading.get_native_id()]  # The thread that ran the callback
+    assert "No real-time priority for the audio callback (rtkit: Operation not permitted)" in caplog.text

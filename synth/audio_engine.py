@@ -56,6 +56,7 @@ import soundfile as sf
 from synth.dsp import Note, INSTRUMENTS
 from synth.config import AudioConfig
 from synth.errors import SynthError
+from synth.realtime import make_thread_realtime
 
 log = logging.getLogger(__name__)
 
@@ -192,6 +193,10 @@ class _AudioProcess:
         self.callback_error = None
         # Current recording, None when not recording (read by the callback)
         self.recorder: _Recorder | None = None
+        # Kernel id of the thread running the callback, set by its first
+        # call (see _make_callback_realtime)
+        self.callback_thread_id = None
+        self.callback_started = threading.Event()
 
     def _audio_callback(self, outdata, frames, time_info, status):
         """
@@ -202,6 +207,10 @@ class _AudioProcess:
         # The try block costs nothing until an exception is raised (zero-cost
         # exception handling, Python >= 3.11)
         try:
+            if self.callback_thread_id is None:
+                self.callback_thread_id = threading.get_native_id()
+                self.callback_started.set()
+
             if status:
                 # Underflow/overflow reported by PortAudio: count it, the
                 # status loop will report it to the UI (no logging from the
@@ -241,6 +250,24 @@ class _AudioProcess:
         silence = np.zeros((self.buffer_size, self.channels), dtype=np.float32)
         self._audio_callback(silence, self.buffer_size, None, None)
         self.notes = []
+        # This thread is not the stream's: let its first callback register
+        self.callback_thread_id = None
+        self.callback_started.clear()
+
+    def _make_callback_realtime(self):
+        """Linux: real-time priority for the callback thread (see
+        realtime.py). Without it, the synthesizer still works, with more
+        xruns at low latency."""
+        if not self.callback_started.wait(timeout=1.0):
+            log.warning("No real-time priority for the audio callback: it was not called")
+            return
+        try:
+            make_thread_realtime(self.callback_thread_id)
+        except OSError as e:
+            log.warning(f"No real-time priority for the audio callback ({e}): "
+                        f"xruns are more likely at low latency")
+            return
+        log.info("Audio callback running at real-time priority (rtkit)")
 
     def _create_stream(self) -> sd.OutputStream:
         """
@@ -382,6 +409,8 @@ class _AudioProcess:
             return
 
         self.status_queue.put(('READY',))
+        if sys.platform == 'linux':  # macOS: real-time already
+            self._make_callback_realtime()
         last_status_time = 0.0
 
         try:
