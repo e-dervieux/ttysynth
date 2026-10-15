@@ -119,3 +119,22 @@ def test_layout_switch_resets_shift_that_does_not_fit(make_handler, tmp_path):
 
 def test_capture_status_before_start(handler):
     assert handler.capture_status == 'OFF'
+
+
+def test_held_volume_keys_repeat(handler, controls):
+    for name in ('volume_up', 'volume_down'):
+        key = controls[name]
+        handler._on_key(key, True)
+        handler._on_repeat(key)
+        handler._on_repeat(key)
+        handler._on_key(key, False)
+    assert handler.controls_pressed == ['volume_up'] * 3 + ['volume_down'] * 3
+
+
+def test_held_notes_and_other_controls_do_not_repeat(handler, controls):
+    for key in ('a', controls['instrument_next'], controls['octave_up']):
+        handler._on_key(key, True)
+        handler._on_repeat(key)
+        handler._on_key(key, False)
+    assert handler.notes == [('a', 'C4', True), ('a', 'C4', False)]
+    assert handler.controls_pressed == ['instrument_next', 'octave_up']

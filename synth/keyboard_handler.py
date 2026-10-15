@@ -4,7 +4,7 @@ Musical keyboard: turns key presses and releases into notes and controls.
 Keys come from an input backend (see input_backends.py) as normalized key
 names. Control keys trigger their control (see config.CONTROLS), other keys
 play the note of the current layout (see keymap.py), shifted by whole
-octaves.
+octaves. Holding a key repeats only the controls of REPEATING_CONTROLS.
 """
 
 # Global imports
@@ -21,6 +21,12 @@ from synth.music import MIDI_MAX, MIDI_MIN, midi_to_note
 
 log = logging.getLogger(__name__)
 
+# Controls repeated while their key is held (at the keyboard's auto-repeat
+# rate), to sweep the volume. Notes and the other controls trigger once per
+# press: a repeated note would stutter, and cycling instruments or layouts
+# while a key is held would be chaos.
+REPEATING_CONTROLS = {'volume_up', 'volume_down'}
+
 
 class KeyboardHandler:
     """Layouts, octave shift, held notes, and control keys"""
@@ -34,7 +40,7 @@ class KeyboardHandler:
             on_note: called with (key, MIDI note, pressed) when a note key is
                      pressed or released
             on_control: called with the control name when a control key is
-                        pressed
+                        pressed, and while it is held for REPEATING_CONTROLS
 
         Raises:
             ConfigError: invalid layout, or octave shift out of range
@@ -135,6 +141,12 @@ class KeyboardHandler:
             self.pressed_keys[key] = midi
         self._on_note(key, midi, True)
 
+    def _on_repeat(self, key: str):
+        """Auto-repeat of a held key: only REPEATING_CONTROLS react"""
+        control = self._control_for_key.get(key)
+        if control in REPEATING_CONTROLS:
+            self._on_control(control)
+
     def get_pressed_keys(self) -> dict[str, int]:
         """Currently held note keys and their notes (thread-safe copy)"""
         with self.key_lock:
@@ -151,7 +163,7 @@ class KeyboardHandler:
         Raises:
             SynthError: no usable keyboard input (the terminal is restored)
         """
-        self.backend = start_input(self._on_key)
+        self.backend = start_input(self._on_key, self._on_repeat)
 
     def stop(self):
         """Stop keyboard input and restore the terminal"""

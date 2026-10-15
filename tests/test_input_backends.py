@@ -30,14 +30,20 @@ def release(code, mods='1'):
     return f"\x1b[{code};{mods}:3u"
 
 
+def repeat(code, mods='1'):
+    return f"\x1b[{code};{mods}:2u"
+
+
 SHIFT, CTRL, ALT, CAPS_LOCK = '2', '5', '3', '65'
 
 
 @pytest.fixture
 def kitty():
-    """Kitty backend recording its (key, pressed) events in .events"""
+    """Kitty backend recording its (key, pressed) events, and (key, 'repeat'),
+    in .events"""
     events = []
-    backend = KittyInput(lambda key, pressed: events.append((key, pressed)), None)
+    backend = KittyInput(lambda key, pressed: events.append((key, pressed)),
+                         lambda key: events.append((key, 'repeat')), None)
     backend.events = events
     return backend
 
@@ -85,9 +91,15 @@ def test_caps_lock_does_not_block_keys(kitty):
     assert kitty.events == [('q', True), ('q', False)]
 
 
-def test_auto_repeat_is_ignored(kitty):
-    kitty._consume_input(press(97) + '\x1b[97;1:2u' + press(97) + release(97))
-    assert kitty.events == [('a', True), ('a', False)]
+def test_auto_repeat_is_reported_between_press_and_release(kitty):
+    kitty._consume_input(press(97) + repeat(97) + repeat(97) + release(97))
+    assert kitty.events == [('a', True), ('a', 'repeat'), ('a', 'repeat'), ('a', False)]
+
+
+def test_repeat_of_an_ignored_press_is_ignored(kitty):
+    """Ctrl+Q is a shortcut: neither its press nor its repeats are keys"""
+    kitty._consume_input(press(113, CTRL) + repeat(113, CTRL) + release(113, CTRL))
+    assert kitty.events == []
 
 
 def test_focus_loss_releases_held_keys(kitty):
@@ -148,7 +160,8 @@ Q_VK = 12  # macOS virtual key code of the Q key
 @pytest.fixture
 def pynput():
     events = []
-    backend = PynputInput(lambda key, pressed: events.append((key, pressed)), None)
+    backend = PynputInput(lambda key, pressed: events.append((key, pressed)),
+                          lambda key: events.append((key, 'repeat')), None)
     backend._setup_keys(FAKE_PK)
     backend.events = events
     return backend
@@ -193,6 +206,14 @@ def test_pynput_named_keys(pynput):
     assert pynput.events == [('tab', True), ('tab', False)]
 
 
+def test_pynput_press_of_a_held_key_is_a_repeat(pynput):
+    """pynput reports auto-repeats as presses without release"""
+    pynput._on_press(KeyCode(Q_VK, 'q'))
+    pynput._on_press(KeyCode(Q_VK, 'q'))
+    pynput._on_release(KeyCode(Q_VK, 'q'))
+    assert pynput.events == [('q', True), ('q', 'repeat'), ('q', False)]
+
+
 def test_pynput_refused_under_wayland(pynput, monkeypatch):
     monkeypatch.setenv('WAYLAND_DISPLAY', 'wayland-0')
     with pytest.raises(SynthError, match='Wayland'):
@@ -225,7 +246,7 @@ elif case == 'no-pynput':
     sys.modules['pynput'] = None  # import pynput raises ImportError
     os.environ.pop('WAYLAND_DISPLAY', None)  # Would fail before the import
 try:
-    input_backends.start_input(lambda key, pressed: None)
+    input_backends.start_input(lambda key, pressed: None, lambda key: None)
 except (KeyboardInterrupt, RuntimeError, SynthError) as e:
     print(type(e).__name__, 'restored' if termios.tcgetattr(0) == before else 'NOT restored')
 '''

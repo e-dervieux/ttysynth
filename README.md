@@ -112,7 +112,7 @@ On Linux, the audio callback asks RealtimeKit (rtkit, the desktop's service Pipe
 ### Default controls (see `config.ini`)
 
 - Notes: C4 to E5, laid out like a piano keyboard (natural notes on the home row, sharps above): `a` = C4, `w` = C#4, `s` = D4, ... with the default QWERTY layout, `q` = C4, `z` = C#4, `s` = D4, ... with AZERTY
-- `+` / `-`: volume up / down
+- `+` / `-`: volume up / down (hold to keep changing it)
 - `tab`: switch instrument (flute / pluck)
 - `v`: switch layout (azerty / qwerty / custom)
 - `c`: switch temperament (equal / pythagorean / meantone / werckmeister)

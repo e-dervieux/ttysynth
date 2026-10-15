@@ -20,9 +20,9 @@ deliver. Two backends are therefore used, picked automatically at startup
    the terminal is NOT focused". On Linux, it only works under X11: it is
    refused under Wayland, where it would capture nothing.
 
-Backends only report key presses and releases, as normalized key names (the
-lowercase character, or esc / tab / enter / space, see keymap.NAMED_KEYS):
-what keys do is decided by the keyboard handler.
+Backends only report key presses, auto-repeats and releases, as normalized
+key names (the lowercase character, or esc / tab / enter / space, see
+keymap.NAMED_KEYS): what keys do is decided by the keyboard handler.
 """
 
 # Global imports
@@ -187,17 +187,21 @@ class InputBackend:
     key code) and resolves their name at press time. The release is
     reported under that same name, whatever modifiers changed in between
     (Shift turning '=' into '+', Ctrl turning 'q' into a control
-    character...): presses and releases always come in pairs, and
-    auto-repeats are dropped.
+    character...): presses and releases always come in pairs, auto-repeats
+    in between.
     """
 
-    def __init__(self, on_key: Callable[[str, bool], None], saved_term_attrs: list):
+    def __init__(self, on_key: Callable[[str, bool], None], on_repeat: Callable[[str], None],
+                 saved_term_attrs: list):
         """
         Args:
             on_key: called with (key name, pressed) from the input thread
+            on_repeat: called with the key name on each auto-repeat of a held
+                       key, from the input thread
             saved_term_attrs: terminal attributes restored by stop()
         """
         self._on_key = on_key
+        self._on_repeat = on_repeat
         self._saved_term_attrs = saved_term_attrs
         # Physical key id -> key name resolved at press time. Only ever
         # accessed from the backend's input thread.
@@ -206,11 +210,19 @@ class InputBackend:
         self.running = False
 
     def _key_down(self, key_id, key_name: str):
-        """Press edge of a physical key (auto-repeats are ignored)"""
+        """Press edge of a physical key. A press of a held key is an
+        auto-repeat (pynput reports them this way)."""
         if key_id in self._held:
+            self._key_repeat(key_id)
             return
         self._held[key_id] = key_name
         self._on_key(key_name, True)
+
+    def _key_repeat(self, key_id):
+        """Auto-repeat of a held key, reported under its press name"""
+        key_name = self._held.get(key_id)
+        if key_name is not None:
+            self._on_repeat(key_name)
 
     def _key_up(self, key_id):
         """Release edge of a physical key, reported under its press name"""
@@ -337,8 +349,11 @@ class KittyInput(InputBackend):
             # must not leave that key (and its note) stuck.
             self._key_up(keycode)
             return
+        if event == _EVENT_REPEAT:
+            self._key_repeat(keycode)
+            return
         if event != _EVENT_PRESS:
-            return  # _EVENT_REPEAT: the key is already held
+            return  # Unknown event type
 
         if modifiers & _MOD_CTRL and keycode == ord('c'):
             # The protocol sends Ctrl+C as an escape code instead of letting
@@ -403,8 +418,8 @@ class KittyInput(InputBackend):
 class PynputInput(InputBackend):
     """pynput global keyboard hook (events from the OS, not from stdin)"""
 
-    def __init__(self, on_key, saved_term_attrs):
-        super().__init__(on_key, saved_term_attrs)
+    def __init__(self, on_key, on_repeat, saved_term_attrs):
+        super().__init__(on_key, on_repeat, saved_term_attrs)
         self._listener = None
         self._input_monitoring_ok = True
         self._pk = None             # pynput.keyboard module, see _setup_keys
@@ -551,13 +566,15 @@ class PynputInput(InputBackend):
                 raise SynthError("Keyboard listener (pynput) stopped unexpectedly")
 
 
-def start_input(on_key: Callable[[str, bool], None]) -> InputBackend:
+def start_input(on_key: Callable[[str, bool], None], on_repeat: Callable[[str], None]) -> InputBackend:
     """
     Start the best available backend: the kitty protocol if the terminal
     supports it, the pynput global hook otherwise.
 
     Args:
         on_key: called with (key name, pressed) from the input thread
+        on_repeat: called with the key name on each auto-repeat of a held
+                   key, from the input thread
 
     Raises:
         SynthError: no usable keyboard input
@@ -571,7 +588,7 @@ def start_input(on_key: Callable[[str, bool], None]) -> InputBackend:
     backend = None
     try:
         backend_class = KittyInput if _detect_kitty_protocol() else PynputInput
-        backend = backend_class(on_key, saved_term_attrs)
+        backend = backend_class(on_key, on_repeat, saved_term_attrs)
         backend.start()
     except BaseException:
         # Restore the terminal before propagating, whatever went wrong:
