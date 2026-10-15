@@ -130,16 +130,23 @@ def test_refresh_is_immediate_on_change_and_slow_when_idle(synth, monkeypatch):
     try:
         time.sleep(1.0)
         idle_frames = len(FakeLive.frames)
+        # Press just after a frame: the next idle refresh is then a whole idle
+        # period away, it cannot be mistaken for an immediate redraw
+        deadline = time.monotonic() + 1.0
+        while len(FakeLive.frames) == idle_frames and time.monotonic() < deadline:
+            time.sleep(0.001)
         pressed = time.monotonic()
         synth.on_note('a', 60, True)
-        time.sleep(0.1)
+        time.sleep(0.2)
         drawn = [frame for frame in FakeLive.frames if frame > pressed]
     finally:
         synth.running = False
         synth.display_changed.set()
         thread.join(timeout=2)
     assert 3 <= idle_frames <= 6                    # 4 Hz (plus the first frame)
-    assert drawn and drawn[0] - pressed < 0.05      # Not at the next idle refresh
+    # Immediate: within the frame rate cap plus one render (generous for slow
+    # machines), well before the next idle refresh
+    assert drawn and drawn[0] - pressed < 0.5 / tui.IDLE_RATE
     assert not thread.is_alive()
 
 
