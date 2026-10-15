@@ -17,7 +17,8 @@ deliver. Two backends are therefore used, picked automatically at startup
    Terminal.app / iTerm2 menu option, sometimes enabled by password
    managers). Both conditions are detected and surfaced in the TUI status
    bar; Secure Keyboard Entry is the classic cause of "keys only work when
-   the terminal is NOT focused".
+   the terminal is NOT focused". On Linux, it only works under X11: it is
+   refused under Wayland, where it would capture nothing.
 
 Backends only report key presses and releases, as normalized key names (the
 lowercase character, or esc / tab / enter / space, see keymap.NAMED_KEYS):
@@ -440,6 +441,14 @@ class PynputInput(InputBackend):
     def start(self):
         """Start the global listener and run macOS diagnostics (raises
         SynthError if pynput is unavailable)"""
+        if os.environ.get('WAYLAND_DISPLAY'):
+            # On Linux, pynput listens through X11 only: under Wayland it
+            # starts without error, but only sees the keys typed in X11
+            # windows, never those of a (native Wayland) terminal
+            raise SynthError(
+                f"Keyboard input unavailable: this terminal lacks the kitty keyboard "
+                f"protocol, and the pynput fallback cannot capture keys under Wayland. "
+                f"Use a terminal supporting the protocol ({_KITTY_TERMINALS}).")
         try:
             from pynput import keyboard as pk
         except ImportError as e:

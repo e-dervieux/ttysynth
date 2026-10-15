@@ -13,6 +13,7 @@ import types
 
 import pytest
 
+from synth.errors import SynthError
 from synth.input_backends import KittyInput, PynputInput
 
 
@@ -192,12 +193,18 @@ def test_pynput_named_keys(pynput):
     assert pynput.events == [('tab', True), ('tab', False)]
 
 
+def test_pynput_refused_under_wayland(pynput, monkeypatch):
+    monkeypatch.setenv('WAYLAND_DISPLAY', 'wayland-0')
+    with pytest.raises(SynthError, match='Wayland'):
+        pynput.start()
+
+
 # ----------------------------------------------------------------------
 # Terminal restored when the startup fails (in a pseudo-terminal)
 # ----------------------------------------------------------------------
 
 STARTUP_FAILURE_SCRIPT = '''
-import sys, termios
+import os, sys, termios
 from synth import input_backends
 from synth.errors import SynthError
 
@@ -216,6 +223,7 @@ elif case == 'bug':
 elif case == 'no-pynput':
     input_backends._detect_kitty_protocol = lambda: False
     sys.modules['pynput'] = None  # import pynput raises ImportError
+    os.environ.pop('WAYLAND_DISPLAY', None)  # Would fail before the import
 try:
     input_backends.start_input(lambda key, pressed: None)
 except (KeyboardInterrupt, RuntimeError, SynthError) as e:

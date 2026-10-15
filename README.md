@@ -218,7 +218,9 @@ python manual_tests.py 7    # note-on latency while the TUI renders
 
 - Linux: partially supported. Keyboard input works in terminals supporting the
   kitty keyboard protocol (kitty, foot, WezTerm, Alacritty, Ghostty); the pynput
-  fallback only works under X11, not Wayland. PortAudio must be installed
+  fallback only works under X11: under Wayland (the default of most recent
+  distributions, Ubuntu included), other terminals are refused with an error
+  message. PortAudio must be installed
   (see *Installation*).
 - Windows: not supported (the terminal handling relies on termios, Unix only).
 - Losing the output device (e.g. unplugging headphones) stops the synthesizer
