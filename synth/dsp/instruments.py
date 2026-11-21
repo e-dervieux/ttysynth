@@ -44,7 +44,47 @@ class Instrument(ABC):
         """
 
 
-class Flute(Instrument):
+class AdditiveInstrument(Instrument):
+    """
+    Additive synthesis: a sum of harmonics (sines at multiples of the note
+    frequency), whose weights each subclass gives (_harmonics).
+    """
+
+    def __init__(self, sample_rate: int):
+        super().__init__(sample_rate)
+        # Harmonic numbers and weights, set on the first buffer: they may
+        # depend on the note frequency (an instrument instance plays one note)
+        self._harmonic_numbers = None
+        self._harmonic_weights = None
+
+    @abstractmethod
+    def _harmonics(self, frequency: float) -> tuple[np.ndarray, np.ndarray]:
+        """Harmonic numbers (1.0: the fundamental) and their weights, for a
+        note of this frequency"""
+
+    def generate_audio(self, frequency: float, num_samples: int, t_start: int) -> np.ndarray:
+        """
+        Generate the sum of the harmonics (no envelope applied)
+
+        Args:
+            frequency: Frequency in Hz
+            num_samples: Number of samples to generate
+            t_start: Starting sample index for phase continuity
+
+        Returns:
+            Audio buffer as numpy array (without envelope)
+        """
+        if self._harmonic_numbers is None:
+            self._harmonic_numbers, self._harmonic_weights = self._harmonics(frequency)
+        # All harmonics at once: a single np.sin over a (samples x harmonics)
+        # matrix, then the weighted sum. At 64 samples, numpy time is mostly
+        # per-call overhead: few calls on bigger arrays beat a loop.
+        angle = (2 * np.pi * frequency / self.sample_rate) * np.arange(t_start, t_start + num_samples)
+        harmonics = np.sin(np.multiply.outer(angle, self._harmonic_numbers))
+        return (harmonics @ self._harmonic_weights).astype(np.float32)
+
+
+class Flute(AdditiveInstrument):
     """Flute instrument - additive synthesis (sine + harmonics) with a soft
     ADSR envelope (breath noise: TODO, see noise_level)"""
 
@@ -70,30 +110,63 @@ class Flute(Instrument):
 
         # Harmonics: weight of the fundamental, 2nd harmonic, 3rd...
         self.harmonics = [1, 0.2, 0.14, 0, 0.05]
-        # Harmonic numbers and normalized weights (summing to 1), zero
-        # weights left out: they would only cost time
+
+    def _harmonics(self, frequency: float) -> tuple[np.ndarray, np.ndarray]:
+        """The same for every note: normalized weights (summing to 1), zero
+        weights left out (they would only cost time)"""
         weights = np.array(self.harmonics) / np.sum(self.harmonics)
-        self._harmonic_numbers = np.flatnonzero(weights) + 1.0
-        self._harmonic_weights = weights[weights != 0]
+        return np.flatnonzero(weights) + 1.0, weights[weights != 0]
 
-    def generate_audio(self, frequency: float, num_samples: int, t_start: int) -> np.ndarray:
-        """
-        Generate flute audio: sine wave with harmonics (no envelope applied)
 
-        Args:
-            frequency: Frequency in Hz
-            num_samples: Number of samples to generate
-            t_start: Starting sample index for phase continuity
+def _partial_sum_peaks(slope: float, count: int) -> np.ndarray:
+    """
+    Peak amplitude of sum(k ** -slope * sin(k x), k = 1..n), for n = 1 to
+    `count` (index n - 1). The sum is odd and 2 pi periodic: its peak is
+    the maximum of its absolute value over [0, pi], sampled finely enough
+    (about 30 points per period of the highest harmonic).
+    """
+    x = np.linspace(0, np.pi, 16 * count)
+    k = np.arange(1, count + 1.0)
+    partial_sums = np.cumsum(k ** -slope * np.sin(np.multiply.outer(x, k)), axis=1)
+    return np.abs(partial_sums).max(axis=0)
 
-        Returns:
-            Audio buffer as numpy array (without envelope)
-        """
-        # All harmonics at once: a single np.sin over a (samples x harmonics)
-        # matrix, then the weighted sum. At 64 samples, numpy time is mostly
-        # per-call overhead: few calls on bigger arrays beat a loop.
-        angle = (2 * np.pi * frequency / self.sample_rate) * np.arange(t_start, t_start + num_samples)
-        harmonics = np.sin(np.multiply.outer(angle, self._harmonic_numbers))
-        return (harmonics @ self._harmonic_weights).astype(np.float32)
+
+class Lead(AdditiveInstrument):
+    """
+    Bright lead, made to be heard over loud music or a singing voice: a
+    sawtooth-like spectrum (every harmonic, weights k ** -SLOPE), rich in
+    the 1-4 kHz range the ear is most sensitive to. Built harmonic by
+    harmonic up to CUTOFF only: band-limited, hence free of the aliasing
+    (inharmonic, out of tune components) of a naive digital sawtooth, which
+    no filter can remove afterwards.
+    """
+
+    # Spectrum, to tune by ear. SLOPE: 1.0 is a sawtooth, harsh at high
+    # volume; higher is softer. CUTOFF: highest harmonic frequency (Hz).
+    # MAX_HARMONICS bounds the cost of low notes (about 0.3 us per harmonic
+    # per voice and 64-sample buffer).
+    SLOPE = 1.4
+    CUTOFF = 14000.0
+    MAX_HARMONICS = 32
+    # Peak amplitude for each number of harmonics: notes are normalized to a
+    # peak of 1, like the other instruments (computed once, at import time:
+    # too slow for the audio callback)
+    _PEAKS = _partial_sum_peaks(SLOPE, MAX_HARMONICS)
+
+    def __init__(self, sample_rate: int):
+        super().__init__(sample_rate)
+        # Clear attack, full sustain, short release
+        self.attack_time = 0.008
+        self.decay_time = 0.0
+        self.sustain_level = 1.0
+        self.release_time = 0.1
+
+    def _harmonics(self, frequency: float) -> tuple[np.ndarray, np.ndarray]:
+        # Below the Nyquist frequency in any case (low sample rates)
+        cutoff = min(self.CUTOFF, 0.45 * self.sample_rate)
+        count = max(1, min(self.MAX_HARMONICS, int(cutoff / frequency)))
+        numbers = np.arange(1, count + 1.0)
+        return numbers, numbers ** -self.SLOPE / self._PEAKS[count - 1]
 
 
 class PluckedString(Instrument):

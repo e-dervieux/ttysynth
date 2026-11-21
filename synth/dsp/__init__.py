@@ -2,7 +2,7 @@
 Sound synthesis: instruments (sound generation) and notes (envelope, state).
 """
 
-from synth.dsp.instruments import Instrument, Flute, PluckedString
+from synth.dsp.instruments import Instrument, Flute, Lead, PluckedString
 from synth.dsp.note import Note
 
 # Registry of available instruments, used for instrument switching.
@@ -10,6 +10,7 @@ from synth.dsp.note import Note
 INSTRUMENTS = {
     'flute': Flute,
     'pluck': PluckedString,
+    'lead': Lead,
 }
 
-__all__ = ['Instrument', 'Flute', 'PluckedString', 'Note', 'INSTRUMENTS']
+__all__ = ['Instrument', 'Flute', 'Lead', 'PluckedString', 'Note', 'INSTRUMENTS']

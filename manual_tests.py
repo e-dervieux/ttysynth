@@ -221,6 +221,14 @@ def test_audio_engine():
         for note in test_freqs:
             audio.stop_note(note)
 
+        print("\n🎺 Playing the same chord with the lead...")
+        for note, freq in test_freqs.items():
+            audio.play_note(note, freq, instrument_type='lead')
+        time.sleep(2.0)
+        for note in test_freqs:
+            audio.stop_note(note)
+        time.sleep(0.5)
+
         # Test volume
         print("\n🔊 Testing volume changes...")
         audio.play_note('A', 440.0, instrument_type='flute')

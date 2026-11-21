@@ -10,9 +10,10 @@ Runs on macOS and Linux (tested on Ubuntu 26.04: GNOME on Wayland, PipeWire); se
 
 - Real-time, low-latency audio synthesis (configurable buffer size: 64 samples, i.e. 1.3 ms at 48 kHz, in the shipped `config.ini`)
 - Polyphonic: play chords, notes overlap naturally through their release phase
-- Two instruments, switchable live:
+- Three instruments, switchable live:
   - **Flute**: additive synthesis (sine + harmonics) with a soft ADSR envelope
   - **Pluck**: harp / classical guitar-like sound using the dirt-cheap 80s [Karplus-Strong algorithm](https://en.wikipedia.org/wiki/Karplus%E2%80%93Strong_string_synthesis)
+  - **Lead**: bright, sawtooth-like sound (band-limited additive synthesis, no aliasing), made to be heard over loud music or while singing
 - Four temperaments, switchable live: equal (modern), Pythagorean, quarter-comma meantone and Werckmeister I (III) "correct temperament" (see `synth/music.py` for how each distributes the Pythagorean comma)
 - Full-screen TUI (alternate screen buffer, like htop) showing sample rate, buffer size, stream latency (as reported by PortAudio), xrun count, volume, held notes (also highlighted in the key map) and a scrolling log panel. It adapts to the window size; the minimum depends on the width and the layout (70×22 for the built-in layouts at 70 columns), and a smaller window shows the size needed
 - Recording of the output to FLAC files (24-bit, maximum compression), in `recordings/` by default
@@ -113,7 +114,7 @@ On Linux, the audio callback asks RealtimeKit (rtkit, the desktop's service Pipe
 
 - Notes: C4 to E5, laid out like a piano keyboard (natural notes on the home row, sharps above): `a` = C4, `w` = C#4, `s` = D4, ... with the default QWERTY layout, `q` = C4, `z` = C#4, `s` = D4, ... with AZERTY
 - `+` / `-`: volume up / down (hold to keep changing it)
-- `tab`: switch instrument (flute / pluck)
+- `tab`: switch instrument (flute / pluck / lead)
 - `v`: switch layout (azerty / qwerty / custom)
 - `c`: switch temperament (equal / pythagorean / meantone / werckmeister)
 - `(` / `)`: octave down / up

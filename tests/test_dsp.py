@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from synth.dsp import Flute, Note, PluckedString
+from synth.dsp import Flute, Lead, Note, PluckedString
 from synth.dsp.instruments import Instrument
 from synth.dsp.note import Phase
 
@@ -108,6 +108,41 @@ def measured_pitch(signal, expected):
     left, center, right = np.log(spectrum[peak - 1:peak + 2])
     offset = 0.5 * (left - right) / (left - 2 * center + right)
     return (peak + offset) * SAMPLE_RATE / len(signal)
+
+
+def spectrum(signal):
+    """Amplitude spectrum of one second of signal (1 Hz bins)"""
+    return np.abs(np.fft.rfft(signal * np.blackman(len(signal)))) / (0.42 * len(signal) / 2)
+
+
+@pytest.mark.parametrize('frequency', [262, 1046])  # Whole Hz: harmonics on FFT bins
+def test_lead_is_band_limited(frequency):
+    """Every harmonic up to the cutoff, weighted k ** -SLOPE; nothing above
+    it (no aliasing)"""
+    amplitudes = spectrum(Lead(SAMPLE_RATE).generate_audio(frequency, SAMPLE_RATE, 0))
+    count = min(Lead.MAX_HARMONICS, int(Lead.CUTOFF / frequency))
+    harmonics = [amplitudes[k * frequency] for k in range(1, count + 1)]
+    assert harmonics == pytest.approx([harmonics[0] * k ** -Lead.SLOPE for k in range(1, count + 1)],
+                                      rel=0.02)
+    assert amplitudes[count * frequency + 100:].max() < 1e-4 * harmonics[0]
+
+
+@pytest.mark.parametrize('frequency', [65.4, 261.6, 1046.5, 12543.9])  # C2 (capped) to G9
+def test_lead_peaks_at_full_scale(frequency):
+    signal = Lead(SAMPLE_RATE).generate_audio(frequency, SAMPLE_RATE // 10, 0)
+    assert 0.98 < np.max(np.abs(signal)) <= 1.0 + 1e-3
+
+
+def test_lead_harmonic_count_is_capped():
+    lead = Lead(SAMPLE_RATE)
+    lead.generate_audio(32.7, 64, 0)  # C1: 489 harmonics below the cutoff
+    assert len(lead._harmonic_numbers) == Lead.MAX_HARMONICS
+
+
+def test_lead_stays_below_nyquist_at_low_sample_rates():
+    lead = Lead(16000)
+    lead.generate_audio(1000.0, 64, 0)
+    assert lead._harmonic_numbers.max() * 1000.0 < 8000
 
 
 @pytest.mark.parametrize('frequency', [110.0, 220.0, 440.0])
